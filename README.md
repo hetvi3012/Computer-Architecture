@@ -30,7 +30,7 @@ To build and run the assembler, use these steps:
 1. **Open a Terminal** in the project’s main directory.
 2. **Compile** the code with:
     ```bash
-    g++ -std=c++11 main.cpp -o assembler
+    g++ -std=c++11 phase1.cpp -o assembler
     ```
 3. **Run** the assembler:
     ```bash
