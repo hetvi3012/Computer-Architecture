@@ -8,6 +8,17 @@ This project is a lightweight assembler designed for a subset of the RISC-V 32-b
 
 This tool is excellent for educational purposes and small-scale experiments with RISC-V.
 
+## Features
+- **Instruction Support:**  
+  - **R-type:** e.g., `add x1, x2, x3`, `sub x4, x5, x6`  
+  - **I-type:** e.g., `addi x1, x0, 10`, `lb x2, 0(x3)`, `jalr x1, 0(x5)`  
+  - **S-type:** e.g., `sb x6, 4(x7)`  
+  - **SB-type (Branch):** e.g., `beq x1, x2, label`, `bne x3, x4, loop`  
+  - **U-type:** e.g., `lui x5, 0x12345`, `auipc x6, 0xABCD`  
+  - **UJ-type:** e.g., `jal x1, label`
+- **Data Directives:** Supports `.byte`, `.half`, `.word`, `.dword`, and `.asciz` along with section directives (`.text` and `.data`).
+- **Detailed Output:** The machine code output includes each instruction’s address, hexadecimal machine code, and a binary field breakdown comment.
+
 ## Project Structure
 The repository includes the following key files:
 - `input.asm` – The assembly language file to be processed.
