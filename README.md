@@ -23,7 +23,7 @@ This tool is excellent for educational purposes and small-scale experiments with
 The repository includes the following key files:
 - `input.asm` – The assembly language file to be processed.
 - `output.mc` – The resulting machine code file.
-- `main.cpp`  – The complete source code for the assembler.
+- `phase1.cpp`  – The complete source code for the assembler.
 
 ## Compilation & Execution
 To build and run the assembler, use these steps:
