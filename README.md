@@ -41,14 +41,35 @@ The assembler reads `input.asm` and outputs `output.mc`, including both the code
 ## Usage
 Create or edit your assembly file (`input.asm`) using standard RISC-V syntax. For example:
 ```asm
-.data
-arrayA: .byte 10, 20, 30, 40
-arrayB: .word 3735928559
+  .data
+  arrayA: .byte 10, 20, 30, 40
+  arrayB: .word 3735928559
+  
+  .text
+  main:
+      addi x1, x0, 5
+      beq  x1, x0, end
+      add  x0, x0, x0
+  end:
+      jal  x0, end
 
-.text
-main:
-    addi x1, x0, 5
-    beq  x1, x0, end
-    add  x0, x0, x0
-end:
-    jal  x0, end
+
+```
+
+## Limitations
+
+- **Pseudoinstructions:** Not supported.
+- **Floating-Point Operations:** Not supported.
+- **Label Resolution:** Performs static resolution. Undefined labels will trigger error messages.
+- **Branch/Jump Offsets:** Computed relative to the current instruction address; no dynamic simulation is provided.
+
+## Contributing
+
+Contributions and improvements are welcome. Please fork the repository and submit pull requests for any enhancements or bug fixes.
+
+## Contact
+
+For any questions/ queries please contact :
+1. Hetvi Bagdai (2023csb1123@iitrpr.ac.in)
+2. Tanisha Gupta (2023csb1170@iitrpr.ac.in)
+3. Yashashvi Chaudhary (2023csb1174@iitrpr.ac.in)
