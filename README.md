@@ -64,7 +64,7 @@ This project provides a lightweight assembler **and** simulator for a subset of 
     ```
 2. **Run the Simulator:**
     ```bash
-    ./simulator output.mc
+    ./simulator input.mc
     ```
    Upon execution, the simulator:
    - Loads machine code from `output.mc`.
