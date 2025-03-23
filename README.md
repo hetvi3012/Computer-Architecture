@@ -92,7 +92,7 @@ Create or edit your assembly file (`input.asm`) using standard RISC-V syntax. Fo
 Run `./assembler` to generate `output.mc`.
 
 **Simulate the code:**  
-Run `./simulator output.mc` to execute the machine code with interactive prompts.
+Run `./simulator input.mc` to execute the machine code with interactive prompts.
 
 ## Limitations
 - **Pseudoinstructions:** Not supported.
