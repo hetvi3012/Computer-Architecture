@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RISC-V Simulator GUI</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .title {
+      grid-column: 1 / -1;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .panel {
+      background-color: white;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .panel h2 {
+      margin-top: 0;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+      color: #2c3e50;
+    }
+    .flex-row {
+      display: flex;
+      gap: 15px;
+    }
+    .control-panel {
+      grid-column: 1 / -1;
+    }
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    button {
+      padding: 8px 16px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    button:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
+    button.stop {
+      background-color: #e74c3c;
+    }
+    button.stop:hover {
+      background-color: #c0392b;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      font-family: monospace;
+      padding: 10px;
+      resize: vertical;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .register-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .register-box {
+      background-color: #f8f9fa;
+      padding: 5px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .register-name {
+      font-weight: bold;
+      color: #7f8c8d;
+    }
+    .special-registers {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 15px;
+    }
+    .special-register {
+      background-color: #f8f9fa;
+      padding: 8px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+    #console {
+      background-color: #2c3e50;
+      color: #ecf0f1;
+      padding: 10px;
+      font-family: monospace;
+      height: 300px;
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+    .console-line {
+      margin: 2px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .fetch-line { color: #3498db; }
+    .decode-line { color: #2ecc71; }
+    .execute-line { color: #f1c40f; }
+    .wb-line { color: #e74c3c; }
+    .input-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .input-group label {
+      min-width: 120px;
+    }
+    input[type="file"] {
+      padding: 5px;
+    }
+    #cycle-counter {
+      font-weight: bold;
+      margin-left: auto;
+      background-color: #3498db;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 4px;
+    }
+    .tabs {
+      display: flex;
+      margin-bottom: 10px;
+    }
+    .tab {
+      padding: 8px 16px;
+      background-color: #ddd;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+    }
+    .tab.active {
+      background-color: white;
+      border-bottom: 2px solid #3498db;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .memory-grid {
+      height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+    }
+    .memory-entry {
+      display: flex;
+      padding: 3px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .memory-entry:hover {
+      background-color: #f5f5f5;
+    }
+    .address-col {
+      width: 120px;
+      color: #7f8c8d;
+    }
+    .data-col {
+      flex-grow: 1;
+    }
+    .breakpoint-checkbox {
+      margin-right: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">
+      <h1>RISC-V Simulator</h1>
+    </div>
+    
+    <div class="panel control-panel">
+      <h2>Controls</h2>
+      <div class="input-group">
+        <label for="file-input">Input File:</label>
+        <input type="file" id="file-input" accept=".txt,.hex">
+        <button id="load-file">Load</button>
+        <button id="save-file">Save Data Segment</button>
+        <div id="cycle-counter">Cycle: 0</div>
+      </div>
+      <div class="button-group">
+        <button id="step-button">Step (N)</button>
+        <button id="run-button">Run (R)</button>
+        <button id="stop-button" class="stop" disabled>Stop (E)</button>
+        <button id="reset-button">Reset</button>
+      </div>
+      <div class="tabs">
+        <div class="tab active" data-tab="instruction-tab">Machine Code</div>
+        <div class="tab" data-tab="memory-tab">Memory</div>
+      </div>
+      <div class="tab-content active" id="instruction-tab">
+        <textarea id="code-textarea" placeholder="Enter machine code here (format: 0x00000000 0x00000000)"></textarea>
+      </div>
+      <div class="tab-content" id="memory-tab">
+        <div class="memory-grid" id="memory-display">
+          <!-- Memory will be populated here -->
+        </div>
+      </div>
+    </div>
+    
+    <div class="panel">
+      <h2>Register File</h2>
+      <div class="register-grid" id="register-file">
+        <!-- Registers will be populated here -->
+      </div>
+      <div class="special-registers" id="special-registers">
+        <!-- Special registers will be populated here -->
+      </div>
+    </div>
+    
+    <div class="panel">
+      <h2>Simulation Output</h2>
+      <div id="console">
+        <!-- Console output will be appended here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global CPU State 
+    const NUM_REGS = 32;
+    let registers = new Array(NUM_REGS).fill(0);
+    let programCounter = 0;
+    let instructionRegister = 0;
+    let operandA = 0;
+    let operandB = 0;
+    let operandM = 0;
+    let aluResult = 0;
+    let writeBackResult = 0;
+    let memoryDataRegister = 0;
+    let cycleCount = 0;
+    
+    // Memory
+    let instructionMemory = {};
+    let dataSegment = {
+      storage: {}
+    };
+    
+    // Simulation control
+    let isRunning = false;
+    let runInterval = null;
+    
+    // DOM Elements
+    const codeTextarea = document.getElementById('code-textarea');
+    const consoleElement = document.getElementById('console');
+    const cycleCounter = document.getElementById('cycle-counter');
+    const registerFileElement = document.getElementById('register-file');
+    const specialRegistersElement = document.getElementById('special-registers');
+    const memoryDisplayElement = document.getElementById('memory-display');
+    
+    // Buttons
+    const stepButton = document.getElementById('step-button');
+    const runButton = document.getElementById('run-button');
+    const stopButton = document.getElementById('stop-button');
+    const resetButton = document.getElementById('reset-button');
+    const loadFileButton = document.getElementById('load-file');
+    const saveFileButton = document.getElementById('save-file');
+    const fileInput = document.getElementById('file-input');
+    
+    // Tabs
+    const tabs = document.querySelectorAll('.tab');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.classList.remove('active');
+        });
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+    
+    // Initialize register display
+    function initializeRegisters() {
+      registerFileElement.innerHTML = '';
+      for (let i = 0; i < NUM_REGS; i++) {
+        const regBox = document.createElement('div');
+        regBox.className = 'register-box';
+        regBox.innerHTML = `
+          <span class="register-name">R[${i}]</span>
+          <span class="register-value" id="reg-${i}">0</span>
+        `;
+        registerFileElement.appendChild(regBox);
+      }
+      
+      updateSpecialRegisters();
+    }
+    
+    // Update special registers display
+    function updateSpecialRegisters() {
+      specialRegistersElement.innerHTML = `
+        <div class="special-register">
+          <span class="register-name">PC</span>
+          <span>0x${programCounter.toString(16).padStart(8, '0')}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">IR</span>
+          <span>0x${instructionRegister.toString(16).padStart(8, '0')}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">operandA</span>
+          <span>${operandA}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">operandB</span>
+          <span>${operandB}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">operandM</span>
+          <span>${operandM}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">ALU Result</span>
+          <span>${aluResult}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">WB Result</span>
+          <span>${writeBackResult}</span>
+        </div>
+        <div class="special-register">
+          <span class="register-name">Memory Data</span>
+          <span>${memoryDataRegister}</span>
+        </div>
+      `;
+    }
+    
+    // Update register values in the display
+    function updateRegisterDisplay() {
+      for (let i = 0; i < NUM_REGS; i++) {
+        document.getElementById(`reg-${i}`).textContent = registers[i];
+      }
+      updateSpecialRegisters();
+    }
+    
+    // Add message to console
+    function logToConsole(message, type = '') {
+      const line = document.createElement('div');
+      line.className = `console-line ${type}`;
+      line.textContent = message;
+      consoleElement.appendChild(line);
+      consoleElement.scrollTop = consoleElement.scrollHeight;
+    }
+    
+    // Clear console
+    function clearConsole() {
+      consoleElement.innerHTML = '';
+    }
+    
+    // Load machine code from textarea
+    function loadMachineCode() {
+      instructionMemory = {};
+      dataSegment.storage = {};
+      
+      const lines = codeTextarea.value.trim().split('\n');
+      for (const line of lines) {
+        // Skip comments and empty lines
+        const trimmedLine = line.split('#')[0].trim();
+        if (!trimmedLine) continue;
+        
+        const parts = trimmedLine.split(/\s+/);
+        if (parts.length < 2) continue;
+        
+        let addressStr = parts[0];
+        let dataStr = parts[1];
+        
+        // Remove trailing comma if present
+        if (dataStr.endsWith(',')) {
+          dataStr = dataStr.slice(0, -1);
+        }
+        
+        try {
+          // Convert hex strings to numbers
+          const address = parseInt(addressStr, 16);
+          const data = parseInt(dataStr, 16);
+          
+          if (address < 0x10000000) {
+            instructionMemory[address] = data;
+          } else {
+            // Store data byte by byte
+            for (let i = 0; i < 4; i++) {
+              dataSegment.storage[address + i] = (data >> (8 * i)) & 0xFF;
+            }
+          }
+        } catch (error) {
+          logToConsole(`Parsing error on line: ${line}`, 'error');
+        }
+      }
+      
+      updateMemoryDisplay();
+      logToConsole('Machine code loaded successfully.');
+    }
+    
+    // Update memory display
+    function updateMemoryDisplay() {
+      memoryDisplayElement.innerHTML = '';
+      
+      // Display instruction memory
+      const addresses = Object.keys(instructionMemory).sort((a, b) => Number(a) - Number(b));
+      for (const addr of addresses) {
+        const entry = document.createElement('div');
+        entry.className = 'memory-entry';
+        entry.innerHTML = `
+          <input type="checkbox" class="breakpoint-checkbox" data-address="${addr}">
+          <div class="address-col">0x${Number(addr).toString(16).padStart(8, '0')}</div>
+          <div class="data-col">0x${instructionMemory[addr].toString(16).padStart(8, '0')}</div>
+        `;
+        memoryDisplayElement.appendChild(entry);
+      }
+      
+      // Display data segment
+      const dataAddresses = [...new Set(Object.keys(dataSegment.storage).map(addr => Number(addr) - Number(addr) % 4))].sort((a, b) => a - b);
+      for (const baseAddr of dataAddresses) {
+        const word = readWord(baseAddr);
+        const entry = document.createElement('div');
+        entry.className = 'memory-entry';
+        entry.innerHTML = `
+          <div class="address-col">0x${baseAddr.toString(16).padStart(8, '0')}</div>
+          <div class="data-col">0x${word.toString(16).padStart(8, '0')} (${word})</div>
+        `;
+        memoryDisplayElement.appendChild(entry);
+      }
+    }
+    
+    // Helper functions for data access
+    function readByte(address) {
+      return dataSegment.storage[address] || 0;
+    }
+    
+    function readWord(address) {
+      let result = 0;
+      for (let i = 0; i < 4; i++) {
+        const byte = readByte(address + i);
+        result |= (byte << (8 * i));
+      }
+      return result;
+    }
+    
+    function writeByte(address, value) {
+      dataSegment.storage[address] = value & 0xFF;
+    }
+    
+    function writeWord(address, value) {
+      for (let i = 0; i < 4; i++) {
+        writeByte(address + i, (value >> (8 * i)) & 0xFF);
+      }
+    }
+    
+    // Bit manipulation utilities
+    function extractBits(value, high, low) {
+      const mask = (1 << (high - low + 1)) - 1;
+      return (value >> low) & mask;
+    }
+    
+    function extendSign(value, bitCount) {
+      const shift = 32 - bitCount;
+      return ((value << shift) >> shift) | 0; // Force 32-bit signed integer
+    }
+    
+    // Instruction decoder
+    function decodeInstruction(instruction) {
+      const decoded = {
+        opcode: extractBits(instruction, 6, 0),
+        rd: extractBits(instruction, 11, 7),
+        funct3: extractBits(instruction, 14, 12),
+        rs1: extractBits(instruction, 19, 15),
+        rs2: 0,
+        funct7: 0,
+        immediate: 0
+      };
+      
+      // For I-type instructions, rs2 and funct7 are not used
+      if (decoded.opcode !== 0x13 && decoded.opcode !== 0x03 && decoded.opcode !== 0x67) {
+        decoded.rs2 = extractBits(instruction, 24, 20);
+        decoded.funct7 = extractBits(instruction, 31, 25);
+      }
+      
+      // Determine immediate based on instruction type
+      switch (decoded.opcode) {
+        // I-type (ALU, LOAD, JALR)
+        case 0x13:
+        case 0x03:
+        case 0x67: {
+          const imm12 = extractBits(instruction, 31, 20);
+          decoded.immediate = extendSign(imm12, 12);
+          break;
+        }
+        // S-type (store)
+        case 0x23: {
+          const immHigh = extractBits(instruction, 31, 25);
+          const immLow = extractBits(instruction, 11, 7);
+          const imm12 = (immHigh << 5) | immLow;
+          decoded.immediate = extendSign(imm12, 12);
+          break;
+        }
+        // SB-type (branch)
+        case 0x63: {
+          const immBit12 = extractBits(instruction, 31, 31);
+          const immBit11 = extractBits(instruction, 7, 7);
+          const immBits10_5 = extractBits(instruction, 30, 25);
+          const immBits4_1 = extractBits(instruction, 11, 8);
+          const immCombined = (immBit12 << 12) | (immBit11 << 11) |
+                             (immBits10_5 << 5) | (immBits4_1 << 1);
+          decoded.immediate = extendSign(immCombined, 13);
+          break;
+        }
+        // U-type (LUI, AUIPC)
+        case 0x37:
+        case 0x17: {
+          const imm20 = extractBits(instruction, 31, 12);
+          decoded.immediate = imm20 << 12;
+          break;
+        }
+        // UJ-type (JAL)
+        case 0x6F: {
+          const immBit20 = extractBits(instruction, 31, 31);
+          const immBits19_12 = extractBits(instruction, 19, 12);
+          const immBit11 = extractBits(instruction, 20, 20);
+          const immBits10_1 = extractBits(instruction, 30, 21);
+          const immCombined = (immBit20 << 20) | (immBits19_12 << 12) |
+                             (immBit11 << 11) | (immBits10_1 << 1);
+          decoded.immediate = extendSign(immCombined, 21);
+          break;
+        }
+      }
+      
+      return decoded;
+    }
+    
+    // Check if instruction is termination (all zeros)
+    function isTerminationInstruction(instruction) {
+      return instruction === 0;
+    }
+    
+    // Single simulation step
+    function simulationStep() {
+      cycleCount++;
+      cycleCounter.textContent = `Cycle: ${cycleCount}`;
+      
+      // Fetch Stage
+      if (!(programCounter in instructionMemory)) {
+        logToConsole(`[Fetch] No instruction at PC = 0x${programCounter.toString(16)}. Ending simulation.`);
+        stopSimulation();
+        return false;
+      }
+      
+      instructionRegister = instructionMemory[programCounter];
+      logToConsole(`[Fetch] PC = 0x${programCounter.toString(16)}, IR = 0x${instructionRegister.toString(16)}`, 'fetch-line');
+      
+      if (isTerminationInstruction(instructionRegister)) {
+        logToConsole('[Fetch] Termination instruction encountered. Exiting simulation.');
+        stopSimulation();
+        return false;
+      }
+      
+      // Decode Stage
+      const decoded = decodeInstruction(instructionRegister);
+      logToConsole(`[Decode] opcode=0x${decoded.opcode.toString(16)} rd=${decoded.rd} rs1=${decoded.rs1} rs2=${decoded.rs2} funct3=0x${decoded.funct3.toString(16)} funct7=0x${decoded.funct7.toString(16)} immediate=${decoded.immediate}`, 'decode-line');
+      
+      // Operand Setup
+      operandA = registers[decoded.rs1];
+      if (decoded.opcode === 0x13 || decoded.opcode === 0x03 ||
+          decoded.opcode === 0x67 || decoded.opcode === 0x37 ||
+          decoded.opcode === 0x23) {
+        operandB = decoded.immediate;
+      } else if (decoded.opcode === 0x17) { // AUIPC
+        operandA = programCounter;
+        operandB = decoded.immediate;
+      } else {
+        operandB = registers[decoded.rs2];
+      }
+      operandM = registers[decoded.rs2]; // For store operations
+      
+      let nextPC = programCounter + 4;
+      aluResult = 0;
+      writeBackResult = 0;
+      
+      // Execute Stage - long switch statement for all instruction types
+      switch (decoded.opcode) {
+        // R-type Instructions
+        case 0x33:
+          switch (decoded.funct3) {
+            case 0x0:
+              if (decoded.funct7 === 0x00) {
+                aluResult = operandA + operandB;
+                logToConsole(`[Execute] ADD: ${operandA} + ${operandB} = ${aluResult}`, 'execute-line');
+              } else if (decoded.funct7 === 0x20) {
+                aluResult = operandA - operandB;
+                logToConsole(`[Execute] SUB: ${operandA} - ${operandB} = ${aluResult}`, 'execute-line');
+              } else if (decoded.funct7 === 0x01) {
+                aluResult = operandA * operandB;
+                logToConsole(`[Execute] MUL: ${operandA} * ${operandB} = ${aluResult}`, 'execute-line');
+              }
+              break;
+            case 0x4:
+              if (decoded.funct7 === 0x00) {
+                aluResult = operandA ^ operandB;
+                logToConsole(`[Execute] XOR: ${operandA} ^ ${operandB} = ${aluResult}`, 'execute-line');
+              } else if (decoded.funct7 === 0x01) {
+                if (operandB === 0) {
+                  aluResult = 0;
+                  logToConsole('[Execute] DIV: Division by zero!', 'execute-line');
+                } else {
+                  aluResult = Math.floor(operandA / operandB);
+                  logToConsole(`[Execute] DIV: ${operandA} / ${operandB} = ${aluResult}`, 'execute-line');
+                }
+              }
+              break;
+            case 0x6:
+              if (decoded.funct7 === 0x00) {
+                aluResult = operandA | operandB;
+                logToConsole(`[Execute] OR: ${operandA} | ${operandB} = ${aluResult}`, 'execute-line');
+              } else if (decoded.funct7 === 0x01) {
+                if (operandB === 0) {
+                  aluResult = 0;
+                  logToConsole('[Execute] REM: Division by zero!', 'execute-line');
+                } else {
+                  aluResult = operandA % operandB;
+                  logToConsole(`[Execute] REM: ${operandA} % ${operandB} = ${aluResult}`, 'execute-line');
+                }
+              }
+              break;
+            case 0x7:
+              aluResult = operandA & operandB;
+              logToConsole(`[Execute] AND: ${operandA} & ${operandB} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x1:
+              const shiftAmt1 = operandB & 0x1F;
+              aluResult = operandA << shiftAmt1;
+              logToConsole(`[Execute] SLL: ${operandA} << ${shiftAmt1} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x2:
+              aluResult = (operandA < operandB) ? 1 : 0;
+              logToConsole(`[Execute] SLT: (${operandA} < ${operandB}) = ${aluResult}`, 'execute-line');
+              break;
+            case 0x5:
+              const shiftAmt5 = operandB & 0x1F;
+              if (decoded.funct7 === 0x00) {
+                aluResult = (operandA >>> shiftAmt5) & 0xFFFFFFFF;
+                logToConsole(`[Execute] SRL: ${operandA} >>> ${shiftAmt5} = ${aluResult}`, 'execute-line');
+              } else if (decoded.funct7 === 0x20) {
+                aluResult = operandA >> shiftAmt5;
+                logToConsole(`[Execute] SRA: ${operandA} >> ${shiftAmt5} = ${aluResult}`, 'execute-line');
+              }
+              break;
+            default:
+              logToConsole('[Execute] Unimplemented R-type funct3', 'execute-line');
+              break;
+          }
+          writeBackResult = aluResult;
+          break;
+          
+        // I-type ALU Instructions
+        case 0x13:
+          switch (decoded.funct3) {
+            case 0x0:
+              aluResult = operandA + operandB;
+              logToConsole(`[Execute] ADDI: ${operandA} + ${operandB} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x7:
+              aluResult = operandA & operandB;
+              logToConsole(`[Execute] ANDI: ${operandA} & ${operandB} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x6:
+              aluResult = operandA | operandB;
+              logToConsole(`[Execute] ORI: ${operandA} | ${operandB} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x4:
+              aluResult = operandA ^ operandB;
+              logToConsole(`[Execute] XORI: ${operandA} ^ ${operandB} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x2:
+              aluResult = (operandA < operandB) ? 1 : 0;
+              logToConsole(`[Execute] SLTI: (${operandA} < ${operandB}) = ${aluResult}`, 'execute-line');
+              break;
+            case 0x1:
+              const shiftAmt = operandB & 0x1F;
+              aluResult = operandA << shiftAmt;
+              logToConsole(`[Execute] SLLI: ${operandA} << ${shiftAmt} = ${aluResult}`, 'execute-line');
+              break;
+            case 0x5:
+              const shiftAmt2 = operandB & 0x1F;
+              const topExtension = (operandB >> 5) & 0x7F;
+              if (topExtension === 0x00) {
+                aluResult = (operandA >>> shiftAmt2) & 0xFFFFFFFF;
+                logToConsole(`[Execute] SRLI: ${operandA} >>> ${shiftAmt2} = ${aluResult}`, 'execute-line');
+              } else if (topExtension === 0x20) {
+                aluResult = operandA >> shiftAmt2;
+                logToConsole(`[Execute] SRAI: ${operandA} >> ${shiftAmt2} = ${aluResult}`, 'execute-line');
+              } else {
+                logToConsole('[Execute] Unknown I-type shift extension.', 'execute-line');
+              }
+              break;
+            default:
+              logToConsole('[Execute] Unimplemented I-type funct3', 'execute-line');
+              break;
+          }
+          writeBackResult = aluResult;
+          break;
+          
+        // I-type LOAD Instructions
+        case 0x03:
+          const effectiveAddr = operandA + decoded.immediate;
+          aluResult = effectiveAddr;
+          switch (decoded.funct3) {
+            case 0x0:
+              const loadedByte = readByte(effectiveAddr);
+              memoryDataRegister = extendSign(loadedByte, 8);
+              writeBackResult = memoryDataRegister;
+              logToConsole(`[Execute] LB: loaded byte ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+              break;
+            case 0x1:
+              let loadedHalf = 0;
+              for (let i = 0; i < 2; i++) {
+                const byte = readByte(effectiveAddr + i);
+                loadedHalf |= (byte << (8 * i));
+              }
+              memoryDataRegister = extendSign(loadedHalf, 16);
+              writeBackResult = memoryDataRegister;
+              logToConsole(`[Execute] LH: loaded halfword ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+              break;
+            case 0x2:
+              const loadedWord = readWord(effectiveAddr);
+              memoryDataRegister = loadedWord;
+              writeBackResult = memoryDataRegister;
+              logToConsole(`[Execute] LW: loaded word ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+              break;
+            default:
+              logToConsole('[Execute] Unimplemented LOAD funct3', 'execute-line');
+              break;
+          }
+          break;
+          
+        // S-type STORE Instructions
+        case 0x23:
+          const storeAddr = operandA + decoded.immediate;
+          aluResult = storeAddr;
+          switch (decoded.funct3) {
+            case 0x0:
+              writeByte(storeAddr, operandM & 0xFF);
+              logToConsole(`[Execute] SB: stored byte ${operandM & 0xFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
+              break;
+            case 0x1:
+              writeWord(storeAddr, operandM & 0xFFFF);
+              logToConsole(`[Execute] SH: stored halfword ${operandM & 0xFFFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
+              break;
+            case 0x2:
+              writeWord(storeAddr, operandM);
+              logToConsole(`[Execute] SW: stored word ${operandM} to 0x${storeAddr.toString(16)}`, 'execute-line');
+              break;
+            default:
+              logToConsole('[Execute] Unimplemented STORE funct3', 'execute-line');
+              break;
+          }
+          break;
+          
+        // SB-type BRANCH Instructions
+        case 0x63:
+          switch (decoded.funct3) {
+            case 0x0:
+              if (operandA === operandB) {
+                nextPC = programCounter + decoded.immediate;
+                logToConsole(`[Execute] BEQ taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
+              } else {
+                logToConsole('[Execute] BEQ not taken.', 'execute-line');
+              }
+              break;
+            case 0x1:
+              if (operandA !== operandB) {
+                nextPC = programCounter + decoded.immediate;
+                logToConsole(`[Execute] BNE taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
+              } else {
+                logToConsole('[Execute] BNE not taken.', 'execute-line');
+              }
+              break;
+            case 0x4:
+              if (operandA < operandB) {
+                nextPC = programCounter + decoded.immediate;
+                logToConsole(`[Execute] BLT taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
+              } else {
+                logToConsole('[Execute] BLT not taken.', 'execute-line');
+              }
+              break;
+            case 0x5:
+              if (operandA >= operandB) {
+                nextPC = programCounter + decoded.immediate;
+                logToConsole(`[Execute] BGE taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
+              } else {
+                logToConsole('[Execute] BGE not taken.', 'execute-line');
+              }
+              break;
+            default:
+              logToConsole('[Execute] Unimplemented branch funct3.', 'execute-line');
+              break;
+          }
+          break;
+          
+        // UJ-type JAL Instruction
+        case 0x6F:
+          aluResult = programCounter + 4; // Save return address
+          nextPC = programCounter + decoded.immediate;
+          logToConsole(`[Execute] JAL: Jump to 0x${nextPC.toString(16)} with return address 0x${(programCounter + 4).toString(16)}`, 'execute-line');
+          writeBackResult = aluResult;
+          break;
+          
+        // I-type JALR Instruction
+        case 0x67:
+          aluResult = programCounter + 4; // Save return address
+          const target = (operandA + decoded.immediate) & ~1;
+          nextPC = target;
+          logToConsole(`[Execute] JALR: Jump to 0x${nextPC.toString(16)} with return address 0x${(programCounter + 4).toString(16)}`, 'execute-line');
+          writeBackResult = aluResult;
+          break;
+          
+        // U-type LUI Instruction
+        case 0x37:
+          aluResult = decoded.immediate;
+          logToConsole(`[Execute] LUI: Result = 0x${aluResult.toString(16)}`, 'execute-line');
+          writeBackResult = aluResult;
+          break;
+          
+        // U-type AUIPC Instruction
+        case 0x17:
+          aluResult = programCounter + decoded.immediate;
+          logToConsole(`[Execute] AUIPC: Result = 0x${aluResult.toString(16)}`, 'execute-line');
+          writeBackResult = aluResult;
+          break;
+          
+        default:
+          logToConsole(`[Execute] Unknown or unimplemented opcode: 0x${decoded.opcode.toString(16)}`, 'execute-line');
+          break;
+      }
+      
+      // Write-Back Stage
+      if (decoded.rd !== 0) {
+        registers[decoded.rd] = writeBackResult;
+        logToConsole(`[WB] Updated R[${decoded.rd}] = ${registers[decoded.rd]}`, 'wb-line');
+      }
+      
+      // Ensure register 0 remains 0
+      registers[0] = 0;
+      programCounter = nextPC;
+      updateRegisterDisplay();
+      return true;
+    }
+    
+    // Start simulation
+    function startSimulation() {
+      isRunning = true;
+      runButton.disabled = true;
+      stopButton.disabled = false;
+      runInterval = setInterval(() => {
+        if (!simulationStep()) {
+          stopSimulation();
+        }
+      }, 500); // Run every 500ms
+    }
+    
+    // Stop simulation
+    function stopSimulation() {
+      isRunning = false;
+      clearInterval(runInterval);
+      runButton.disabled = false;
+      stopButton.disabled = true;
+    }
+    
+    // Reset simulation
+    function resetSimulation() {
+      stopSimulation();
+      registers.fill(0);
+      programCounter = 0;
+      instructionRegister = 0;
+      operandA = 0;
+      operandB = 0;
+      operandM = 0;
+      aluResult = 0;
+      writeBackResult = 0;
+      memoryDataRegister = 0;
+      cycleCount = 0;
+      cycleCounter.textContent = 'Cycle: 0';
+      clearConsole();
+      updateRegisterDisplay();
+    }
+    
+    // Load file
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          codeTextarea.value = e.target.result;
+          loadMachineCode();
+        };
+        reader.readAsText(file);
+      }
+    });
+    
+    // Button event listeners
+    loadFileButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+    
+    stepButton.addEventListener('click', () => {
+      simulationStep();
+    });
+    
+    runButton.addEventListener('click', () => {
+      startSimulation();
+    });
+    
+    stopButton.addEventListener('click', () => {
+      stopSimulation();
+    });
+    
+    resetButton.addEventListener('click', () => {
+      resetSimulation();
+    });
+    
+    // Initialize the simulator
+    initializeRegisters();
+  </script>
+</body>
+</html>
