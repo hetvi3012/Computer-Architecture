@@ -1,4 +1,3 @@
-# PHASE 1
 # RISC-V 32-bit Assembler
 
 ## Overview
