@@ -67,7 +67,7 @@ This project provides a lightweight assembler **and** simulator for a subset of 
     ./simulator input.mc
     ```
    Upon execution, the simulator:
-   - Loads machine code from `output.mc`.
+   - Loads machine code from `input.mc`.
    - Displays the initial CPU state.
    - Prompts the user to either step through the execution or run continuously.
    - Updates the data segment in the input file after simulation completion.
