@@ -1,7 +1,6 @@
+//2023CSB1123  Hetvi Bagdai
 //2023CSB1174  Yashasvi Chaudhary
 //2023CSB1170  Tanisha Gupta
-//2023CSB1123  Hetvi Bagdai
-
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -10,698 +9,741 @@
 #include <string>
 #include <cstdint>
 #include <iomanip>
+#include <algorithm>
+#include <set>
 
 // ----------------------------------------------------------------------
-// Global CPU State Definitions
+// CPU State Variables
 // ----------------------------------------------------------------------
-static const int NUM_REGS = 32;
-int32_t registers[NUM_REGS];         // Register file (32 registers)
-uint32_t programCounter = 0;         // Program Counter (PC)
-uint32_t instructionRegister = 0;    // Instruction Register (IR)
+static const int TOTAL_REGISTERS = 32;
+int32_t cpuRegisters[TOTAL_REGISTERS];   // General-purpose registers
 
-// Operand and ALU registers:
-int32_t operandA = 0;         // First operand (from source register or PC)
-int32_t operandB = 0;         // Second operand (immediate or register value)
-int32_t operandM = 0;         // Operand for store operations (rs2 value)
-int32_t aluResult = 0;        // ALU computation result
-int32_t writeBackResult = 0;  // Result to write back to the register file
-int32_t memoryDataRegister = 0; // Data loaded from memory
+uint32_t pc = 0;             // Program Counter
+uint32_t ir = 0;             // Instruction Register (holds the fetched instruction)
+int32_t operand1 = 0;        // First ALU operand
+int32_t operand2 = 0;        // Second ALU operand or immediate value
+int32_t storeValue = 0;      // Value used for store instructions
+int32_t aluOutput = 0;       // Result from ALU operations
+int32_t writeBackData = 0;   // Data to be written back to a register
+int32_t memDataReg = 0;      // Register for data loaded from memory
 
-uint64_t cycleCount = 0;      // Simulation clock cycle counter
-
-// Instruction memory: maps addresses to 32-bit instructions.
-std::map<uint32_t, uint32_t> instructionMemory;
+uint64_t cycleCount = 0;     // Clock cycle counter
 
 // ----------------------------------------------------------------------
-// DataSegment Class: Dynamic Data Segment
+// Instruction Memory
 // ----------------------------------------------------------------------
-class DataSegment {
+// This map holds instructions for addresses below 0x10000000.
+std::map<uint32_t, uint32_t> instrMemory;
+
+// ----------------------------------------------------------------------
+// MemorySegment Class
+// ----------------------------------------------------------------------
+// This class represents a memory segment where each address maps to a byte.
+// It is used for both the main data memory and the stack memory.
+class MemorySegment {
 public:
-    // Byte-addressable memory: each address maps to an 8-bit value.
-    std::map<uint32_t, uint8_t> storage;
-
-    // Load data from a file. Only addresses >= 0x10000000 are processed.
-    void loadFromFile(const std::string &fileName) {
-        std::ifstream input(fileName);
-        if (!input.is_open()) {
-            std::cerr << "ERROR: Unable to open file " << fileName << " for data segment loading.\n";
-            return;
-        }
-        std::string line;
-        while (std::getline(input, line)) {
-            // Skip empty lines or comments.
-            if (line.empty() || line[0] == '#')
-                continue;
-            std::istringstream iss(line);
-            std::string addrStr, dataStr;
-            if (!(iss >> addrStr >> dataStr))
-                continue;
-            // Remove trailing comma from data string if present.
-            if (!dataStr.empty() && dataStr.back() == ',')
-                dataStr.pop_back();
-            try {
-                uint32_t address = std::stoul(addrStr, nullptr, 16);
-                if (address >= 0x10000000) {
-                    uint32_t value = std::stoul(dataStr, nullptr, 16);
-                    // Split the 32-bit word into 4 bytes.
-                    for (int i = 0; i < 4; ++i) {
-                        storage[address + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFF);
-                    }
-                }
-            } catch (...) {
-                continue;
-            }
-        }
-        input.close();
-    }
+    std::map<uint32_t, uint8_t> memBytes;  // Underlying storage mapping addresses to bytes
 
     // Write a single byte at the specified address.
     void writeByte(uint32_t address, uint8_t value) {
-        storage[address] = value;
+        memBytes[address] = value;
     }
 
-    // Write a 32-bit word by breaking it into four bytes.
-    void writeWord(uint32_t address, int32_t value) {
-        for (int i = 0; i < 4; ++i) {
-            storage[address + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFF);
+    // Write a 32-bit word in little-endian format.
+    void writeWord(uint32_t address, int32_t word) {
+        for (int i = 0; i < 4; i++) {
+            memBytes[address + i] = static_cast<uint8_t>((word >> (8 * i)) & 0xFF);
         }
     }
 
-    // Read a 32-bit word by reassembling 4 consecutive bytes.
-    int32_t readWord(uint32_t address) {
-        int32_t result = 0;
-        for (int i = 0; i < 4; ++i) {
-            uint8_t byte = 0;
-            if (storage.find(address + i) != storage.end())
-                byte = storage[address + i];
-            result |= (byte << (8 * i));
+    // Read a single signed byte from memory.
+    int8_t readByte(uint32_t address) const {
+        auto iter = memBytes.find(address);
+        if (iter != memBytes.end()) {
+            return static_cast<int8_t>(iter->second);
         }
-        return result;
-    }
-
-    // Read a single byte.
-    int8_t readByte(uint32_t address) {
-        if (storage.find(address) != storage.end())
-            return static_cast<int8_t>(storage[address]);
         return 0;
     }
 
-    // Update the original input file to reflect the current data segment state.
-    void updateInputFile(const std::string &fileName) {
-        std::ifstream input(fileName);
-        if (!input.is_open()){
-            std::cerr << "ERROR: Unable to open file " << fileName << " for updating.\n";
-            return;
+    // Read a 32-bit word from memory (little-endian).
+    int32_t readWord(uint32_t address) const {
+        int32_t result = 0;
+        for (int i = 0; i < 4; i++) {
+            auto iter = memBytes.find(address + i);
+            uint8_t b = (iter != memBytes.end()) ? iter->second : 0;
+            result |= (b << (8 * i));
         }
-        std::vector<std::string> lines;
-        std::string line;
-        while (std::getline(input, line))
-            lines.push_back(line);
-        input.close();
-
-        // Process each line and update if the address belongs to the data segment.
-        for (auto &line : lines) {
-            if (line.empty() || line[0] == '#')
-                continue;
-            std::istringstream iss(line);
-            std::string addrStr, dataStr;
-            if (!(iss >> addrStr >> dataStr))
-                continue;
-            try {
-                uint32_t addr = std::stoul(addrStr, nullptr, 16);
-                if (addr >= 0x10000000) {
-                    int32_t word = readWord(addr);
-                    std::ostringstream oss;
-                    oss << "0x" << std::hex << std::setw(8) << std::setfill('0') << word;
-                    std::string remaining;
-                    std::getline(iss, remaining);
-                    line = addrStr + " " + oss.str() + remaining;
-                }
-            } catch (...) {
-                continue;
-            }
-        }
-        std::ofstream output(fileName);
-        if (!output.is_open()){
-            std::cerr << "ERROR: Unable to open file " << fileName << " for writing.\n";
-            return;
-        }
-        for (const auto &line : lines)
-            output << line << "\n";
-        output.close();
-        std::cout << "Data segment in the input file updated successfully.\n";
+        return result;
     }
 };
 
-DataSegment dataSegment;
-
 // ----------------------------------------------------------------------
-// Bit Extraction and Sign Extension Utilities
+// Data and Stack Memory Segments
 // ----------------------------------------------------------------------
-
-// Extracts bits from 'low' to 'high' (inclusive) from a given value.
-static inline uint32_t extractBits(uint32_t value, int high, int low) {
-    uint32_t mask = (1u << (high - low + 1)) - 1;
-    return (value >> low) & mask;
+// The data segment covers addresses in the range [0x10000000, 0x7FFFFFFF),
+// while the stack segment is used for addresses >= 0x7FFFFFFF.
+MemorySegment dataMemory;
+MemorySegment stackMemory;
+// ----------------------------------------------------------------------
+// Dump a memory segment to a file
+// ----------------------------------------------------------------------
+// This function writes each 4-byte-aligned address (within the specified
+// range) and its corresponding 32-bit word from the given memory segment.
+void dumpMemorySegmentToFile(const std::string &filename,
+    const MemorySegment &segment,
+    uint32_t rangeStart,
+    uint32_t rangeEnd) {
+std::ofstream outFile(filename);
+if (!outFile.is_open()) {
+std::cerr << "ERROR: Unable to open or create " << filename << "\n";
+return;
 }
 
-// Sign-extends a value with 'bitCount' bits to a full 32-bit integer.
-static inline int32_t extendSign(uint32_t value, int bitCount) {
-    int shift = 32 - bitCount;
-    return static_cast<int32_t>((static_cast<int32_t>(value << shift)) >> shift);
+// Collect all addresses present in the segment
+std::vector<uint32_t> addresses;
+addresses.reserve(segment.memBytes.size());
+for (const auto &entry : segment.memBytes) {
+addresses.push_back(entry.first);
+}
+std::sort(addresses.begin(), addresses.end());
+
+// Use a set to ensure we process each 4-byte block only once.
+std::set<uint32_t> processed;
+
+for (uint32_t addr : addresses) {
+if (addr < rangeStart)
+continue;
+if (rangeEnd >= rangeStart && addr >= rangeEnd)
+continue;
+
+// Process only 4-byte aligned addresses
+if (addr % 4 != 0)
+continue;
+if (processed.count(addr) != 0)
+continue;
+
+// Read the 32-bit word at this address
+int32_t wordValue = segment.readWord(addr);
+
+outFile << std::hex << "0x"
+<< std::setw(8) << std::setfill('0') << addr << "  0x"
+<< std::setw(8) << std::setfill('0') << static_cast<uint32_t>(wordValue)
+<< std::dec << "\n";
+
+// Mark the four bytes as processed
+processed.insert(addr);
+processed.insert(addr + 1);
+processed.insert(addr + 2);
+processed.insert(addr + 3);
+}
+
+outFile.close();
 }
 
 // ----------------------------------------------------------------------
-// Instruction Decoding Structures and Functions
+// Dump Instruction Memory to File
+// ----------------------------------------------------------------------
+// This function writes the 32-bit instructions stored in the instruction
+// memory map to a file.
+void dumpInstrMemoryToFile(const std::string &filename) {
+std::ofstream outFile(filename);
+if (!outFile.is_open()) {
+std::cerr << "ERROR: Unable to open or create " << filename << "\n";
+return;
+}
+
+// Collect instruction addresses
+std::vector<uint32_t> instrAddresses;
+instrAddresses.reserve(instrMemory.size());
+for (const auto &entry : instrMemory) {
+instrAddresses.push_back(entry.first);
+}
+std::sort(instrAddresses.begin(), instrAddresses.end());
+
+// Write each instruction
+for (uint32_t address : instrAddresses) {
+uint32_t instructionWord = instrMemory[address];
+outFile << std::hex << "0x" << std::setw(8) << std::setfill('0') << address
+<< "  0x" << std::setw(8) << std::setfill('0') << instructionWord
+<< std::dec << "\n";
+}
+outFile.close();
+}
+
+// ----------------------------------------------------------------------
+// Helper Functions for Bit Manipulation
 // ----------------------------------------------------------------------
 
-// Structure representing a decoded instruction.
-struct DecodedInstruction {
-    uint32_t opcode;    // Operation code.
-    uint32_t rd;        // Destination register.
-    uint32_t rs1;       // First source register.
-    uint32_t rs2;       // Second source register.
-    uint32_t funct3;    // 3-bit function field.
-    uint32_t funct7;    // 7-bit function field.
-    int32_t immediate;  // Sign-extended immediate.
+// Extract a sequence of bits from 'value' between positions 'lo' and 'hi' (inclusive)
+static inline uint32_t extractBits(uint32_t value, int hi, int lo) {
+uint32_t mask = (1u << (hi - lo + 1)) - 1;
+return (value >> lo) & mask;
+}
+
+// Extend the sign of a bit-field value assuming it is 'bitWidth' bits wide.
+static inline int32_t extendSign(uint32_t value, int bitWidth) {
+int shift = 32 - bitWidth;
+return (int32_t)((int32_t)(value << shift) >> shift);
+}
+//=====================================================================
+// InstructionComponents Structure
+//=====================================================================
+// This structure holds the decomposed fields of a 32-bit instruction.
+struct InstructionComponents {
+    uint32_t opCode;    // Main opcode field
+    uint32_t rd;        // Destination register index
+    uint32_t rs1;       // First source register index
+    uint32_t rs2;       // Second source register index
+    uint32_t func3;     // 3-bit function field
+    uint32_t func7;     // 7-bit function field
+    int32_t  imm;       // Immediate value
 };
 
-// Decodes a 32-bit instruction into its components.
-DecodedInstruction decodeInstruction(uint32_t instruction) {
-    DecodedInstruction dec = {};
-    dec.opcode = extractBits(instruction, 6, 0);
-    dec.rd     = extractBits(instruction, 11, 7);
-    dec.funct3 = extractBits(instruction, 14, 12);
-    dec.rs1    = extractBits(instruction, 19, 15);
-    
-    // For I-type instructions (ALU, LOAD, JALR), rs2 and funct7 are not used.
-    if (dec.opcode == 0x13 || dec.opcode == 0x03 || dec.opcode == 0x67) {
-        dec.rs2 = 0;
-        dec.funct7 = 0;
+//=====================================================================
+// Function: decodeInstruction
+// Purpose: Decompose a 32-bit instruction into its individual fields.
+//=====================================================================
+InstructionComponents decodeInstruction(uint32_t inst) {
+    InstructionComponents comp{};
+    comp.opCode = extractBits(inst, 6, 0);
+    comp.rd     = extractBits(inst, 11, 7);
+    comp.func3  = extractBits(inst, 14, 12);
+    comp.rs1    = extractBits(inst, 19, 15);
+
+    // For opcodes that do not require the second source and func7 fields.
+    if (comp.opCode == 0x13 || comp.opCode == 0x03 || comp.opCode == 0x67) {
+        comp.rs2 = 0;
+        comp.func7 = 0;
     } else {
-        dec.rs2 = extractBits(instruction, 24, 20);
-        dec.funct7 = extractBits(instruction, 31, 25);
+        comp.rs2   = extractBits(inst, 24, 20);
+        comp.func7 = extractBits(inst, 31, 25);
     }
-    
-    // Determine the immediate based on opcode type.
-    switch(dec.opcode) {
-        // I-type (ALU, LOAD, JALR)
-        case 0x13:
-        case 0x03:
-        case 0x67: {
-            uint32_t imm12 = extractBits(instruction, 31, 20);
-            dec.immediate = extendSign(imm12, 12);
+
+    // Decode immediate value based on instruction type.
+    switch(comp.opCode) {
+        case 0x13: // I-type arithmetic
+        case 0x03: // I-type load
+        case 0x67: // I-type jump (JALR)
+        {
+            uint32_t imm12 = extractBits(inst, 31, 20);
+            comp.imm = extendSign(imm12, 12);
             break;
         }
-        // S-type (store)
-        case 0x23: {
-            uint32_t immHigh = extractBits(instruction, 31, 25);
-            uint32_t immLow  = extractBits(instruction, 11, 7);
-            uint32_t imm12   = (immHigh << 5) | immLow;
-            dec.immediate = extendSign(imm12, 12);
+        case 0x23: // S-type (store)
+        {
+            uint32_t immHigh = extractBits(inst, 31, 25);
+            uint32_t immLow  = extractBits(inst, 11, 7);
+            uint32_t imm12 = (immHigh << 5) | immLow;
+            comp.imm = extendSign(imm12, 12);
             break;
         }
-        // SB-type (branch)
-        case 0x63: {
-            uint32_t immBit12    = extractBits(instruction, 31, 31);
-            uint32_t immBit11    = extractBits(instruction, 7, 7);
-            uint32_t immBits10_5 = extractBits(instruction, 30, 25);
-            uint32_t immBits4_1  = extractBits(instruction, 11, 8);
-            uint32_t immCombined = (immBit12 << 12) | (immBit11 << 11) |
-                                   (immBits10_5 << 5) | (immBits4_1 << 1);
-            dec.immediate = extendSign(immCombined, 13);
+        case 0x63: // SB-type (branch)
+        {
+            uint32_t bit12   = extractBits(inst, 31, 31);
+            uint32_t bit11   = extractBits(inst, 7, 7);
+            uint32_t bits10_5 = extractBits(inst, 30, 25);
+            uint32_t bits4_1  = extractBits(inst, 11, 8);
+            uint32_t fullImm = (bit12 << 12) | (bit11 << 11)
+                             | (bits10_5 << 5) | (bits4_1 << 1);
+            comp.imm = extendSign(fullImm, 13);
             break;
         }
-        // U-type (LUI, AUIPC)
-        case 0x37:
-        case 0x17: {
-            uint32_t imm20 = extractBits(instruction, 31, 12);
-            dec.immediate = imm20 << 12;
+        case 0x37: // LUI
+        case 0x17: // AUIPC
+        {
+            uint32_t imm20 = extractBits(inst, 31, 12);
+            comp.imm = static_cast<int32_t>(imm20 << 12);
             break;
         }
-        // UJ-type (JAL)
-        case 0x6F: {
-            uint32_t immBit20    = extractBits(instruction, 31, 31);
-            uint32_t immBits19_12 = extractBits(instruction, 19, 12);
-            uint32_t immBit11     = extractBits(instruction, 20, 20);
-            uint32_t immBits10_1  = extractBits(instruction, 30, 21);
-            uint32_t immCombined  = (immBit20 << 20) | (immBits19_12 << 12) |
-                                    (immBit11 << 11) | (immBits10_1 << 1);
-            dec.immediate = extendSign(immCombined, 21);
+        case 0x6F: // UJ-type (JAL)
+        {
+            uint32_t bit20      = extractBits(inst, 31, 31);
+            uint32_t bits19_12  = extractBits(inst, 19, 12);
+            uint32_t bit11      = extractBits(inst, 20, 20);
+            uint32_t bits10_1   = extractBits(inst, 30, 21);
+            uint32_t fullImm    = (bit20 << 20) | (bits19_12 << 12)
+                                 | (bit11 << 11) | (bits10_1 << 1);
+            comp.imm = extendSign(fullImm, 21);
             break;
         }
         default:
-            dec.immediate = 0;
+            comp.imm = 0;
             break;
     }
-    return dec;
+    return comp;
 }
 
-// ----------------------------------------------------------------------
-// Check if an instruction is a termination instruction (all zeros).
-// ----------------------------------------------------------------------
-bool isTerminationInstruction(uint32_t instruction) {
-    return (instruction == 0x00000000);
+//=====================================================================
+// Function: isTerminatorInstruction
+// Purpose: Check if the provided instruction signals termination (all zeros).
+//=====================================================================
+bool isTerminatorInstruction(uint32_t inst) {
+    return (inst == 0x00000000);
 }
 
-// ----------------------------------------------------------------------
-// Load machine code from a file.
-// This reads each line, skips comments/empty lines, and populates either the
-// instruction memory (addresses below 0x10000000) or the data segment.
-// ----------------------------------------------------------------------
-bool loadMachineCodeFile(const std::string &fileName) {
-    std::ifstream file(fileName);
-    if (!file.is_open()) {
-        std::cerr << "ERROR: Unable to open file " << fileName << "\n";
+//=====================================================================
+// Function: loadMemoryConfiguration
+// Purpose: Parse a memory configuration file and distribute the words into
+//          the appropriate segments (instruction, data, or stack) based on address.
+//=====================================================================
+bool loadMemoryConfiguration(const std::string &filename) {
+    std::ifstream fileIn(filename);
+    if (!fileIn.is_open()) {
+        std::cerr << "ERROR: Failed to open file " << filename << "\n";
         return false;
     }
+
     std::string line;
-    while (std::getline(file, line)) {
+    while (std::getline(fileIn, line)) {
+        // Remove any comment starting with '#'
         size_t commentIndex = line.find('#');
         if (commentIndex != std::string::npos) {
             line = line.substr(0, commentIndex);
         }
-        if (line.empty())
-            continue;
+        if (line.empty()) continue;
+
         std::istringstream iss(line);
-        std::string addressStr, dataStr;
-        if (!(iss >> addressStr >> dataStr))
-            continue;
-        size_t commaPos = dataStr.find(',');
-        if (commaPos != std::string::npos)
-            dataStr = dataStr.substr(0, commaPos);
+        std::string addrStr, wordStr;
+        iss >> addrStr >> wordStr;
+        if (addrStr.empty() || wordStr.empty()) continue;
+        if (wordStr[0] == '<' || wordStr[0] == 't') continue;
+
+        // Eliminate any trailing comma from the data field.
+        size_t commaIndex = wordStr.find(',');
+        if (commaIndex != std::string::npos) {
+            wordStr = wordStr.substr(0, commaIndex);
+        }
+
         try {
-            uint32_t address = std::stoul(addressStr, nullptr, 16);
-            uint32_t data = std::stoul(dataStr, nullptr, 16);
-            if (address < 0x10000000) {
-                instructionMemory[address] = data;
+            uint32_t addr = std::stoul(addrStr, nullptr, 16);
+            uint32_t wordVal = std::stoul(wordStr, nullptr, 16);
+
+            if (addr < 0x10000000) {
+                // Instruction region: store into instruction memory.
+                instrMemory[addr] = wordVal;
+            } else if (addr < 0x7FFFFFFF) {
+                // Data region.
+                dataMemory.writeWord(addr, static_cast<int32_t>(wordVal));
             } else {
-                for (int i = 0; i < 4; ++i) {
-                    dataSegment.storage[address + i] = static_cast<uint8_t>((data >> (8 * i)) & 0xFF);
-                }
+                // Stack region.
+                stackMemory.writeWord(addr, static_cast<int32_t>(wordVal));
             }
-        } catch (...) {
-            std::cerr << "Parsing error on line: " << line << "\n";
+        } catch (const std::exception &ex) {
+            std::cerr << "Error processing line: " << line << "\n";
             continue;
         }
     }
-    file.close();
+    fileIn.close();
     return true;
 }
 
-// ----------------------------------------------------------------------
-// Display the current state of the register file and key CPU registers.
-// ----------------------------------------------------------------------
-void displayRegisters() {
-    std::cout << "Register File:\n";
-    for (int i = 0; i < NUM_REGS; ++i) {
-        std::cout << "R[" << std::setw(2) << i << "] = " << std::setw(10)
-                  << registers[i] << "   ";
-        if ((i + 1) % 4 == 0)
+//=====================================================================
+// Function: displayRegisterState
+// Purpose: Print the current state of the CPU registers and key control values.
+//=====================================================================
+void displayRegisterState() {
+    std::cout << "CPU Register State:\n";
+    for (int i = 0; i < TOTAL_REGISTERS; i++) {
+        std::cout << "R[" << std::setw(2) << i << "] = " << cpuRegisters[i] << "   ";
+        if ((i + 1) % 4 == 0) {
             std::cout << "\n";
+        }
     }
     std::cout << "-------------------------------------\n";
-    std::cout << "PC = 0x" << std::hex << programCounter << std::dec
-              << "  IR = 0x" << std::hex << instructionRegister << std::dec << "\n";
-    std::cout << "operandA = " << operandA << "  operandB = " << operandB 
-              << "  operandM = " << operandM << "\n";
-    std::cout << "ALU Result = " << aluResult << "  WriteBackResult = " << writeBackResult 
-              << "  Memory Data Register = " << memoryDataRegister << "\n";
+    std::cout << "PC = 0x" << std::hex << pc << "  IR = 0x" << ir << std::dec << "\n";
+    std::cout << "operand1 = " << operand1 << "  operand2 = " << operand2
+              << "  storeValue = " << storeValue << "\n";
+    std::cout << "aluOutput = " << aluOutput << "  writeBackData = " << writeBackData
+              << "  memDataReg = " << memDataReg << "\n";
     std::cout << "===========================================\n";
 }
 
-// ----------------------------------------------------------------------
-// Main Simulation Loop
-// ----------------------------------------------------------------------
+//=====================================================================
+// Function: selectMemorySegment
+// Purpose: Given an address, determine the correct memory segment for accesses.
+// Returns a pointer to the appropriate MemorySegment, or nullptr if the address
+// falls within the instruction area (which is not allowed).
+//=====================================================================
+MemorySegment* selectMemorySegment(uint32_t addr) {
+    if (addr < 0x10000000) {
+        // Loads/stores to the instruction area are prohibited.
+        return nullptr;
+    } else if (addr < 0x7FFFFFFF) {
+        return &dataMemory;
+    } else {
+        return &stackMemory;
+    }
+}
 int main(int argc, char* argv[]) {
-    std::cout << "Starting RISC-V Simulator..." << std::endl;
+    // Ensure an input file is provided.
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <machine_code_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <memory_config.mc>\n";
         return 1;
     }
-    
-    // Load machine code into instruction memory and data segment.
-    if (!loadMachineCodeFile(argv[1])) {
+
+    std::string configFilename = argv[1];
+    if (!loadMemoryConfiguration(configFilename)) {
         return 1;
     }
-    dataSegment.loadFromFile(argv[1]);
-    
-    // Initialize registers and core state.
-    for (int i = 0; i < NUM_REGS; ++i)
-        registers[i] = 0;
-    programCounter = 0;
-    cycleCount = 0;
-    
-    std::cout << "Initial register state:" << std::endl;
-    displayRegisters();
-    
-    // Prompt user for simulation mode.
-    char userChoice;
-    std::cout << "Enter N for next instruction, R for run-to-end, or E to exit: ";
-    std::cin >> userChoice;
-    if (userChoice == 'E' || userChoice == 'e') {
-        std::cout << "Exiting simulation per user request." << std::endl;
+
+    // Dump initial memory contents into their respective files.
+    dumpInstrMemoryToFile("instruction.mc");
+    dumpMemorySegmentToFile("data.mc", dataMemory, 0x10000000, 0x7FFFFFFF);
+    dumpMemorySegmentToFile("stack.mc", stackMemory, 0x7FFFFFFF, 0xFFFFFFFF);
+
+    // Initialize all CPU registers to zero.
+    for (int i = 0; i < TOTAL_REGISTERS; i++) {
+        cpuRegisters[i] = 0;
+    }
+    // Set the program counter and initialize the stack pointer (register x2).
+    pc = 0;
+    cpuRegisters[2] = 0x7FFFFFFF;
+
+    std::cout << "Initial CPU State (pre-cycle):\n";
+    displayRegisterState();
+
+    char command;
+    std::cout << "Enter N for next cycle, R to run continuously, or E to exit: ";
+    std::cin >> command;
+    if (command == 'E' || command == 'e') {
+        std::cout << "Simulation terminated on user request.\n";
         return 0;
     }
-    bool runToEnd = (userChoice == 'R' || userChoice == 'r');
-    
-    std::cout << "Commencing simulation..." << std::endl;
+    bool continuousRun = (command == 'R' || command == 'r');
+
+    std::cout << "Starting simulation...\n";
     while (true) {
-        std::cout << "Cycle: " << cycleCount << std::endl;
-        
-        // Fetch Stage: Retrieve instruction at current PC.
-        if (instructionMemory.find(programCounter) == instructionMemory.end()) {
-            std::cout << "[Fetch] No instruction at PC = 0x" << std::hex << programCounter
-                      << ". Ending simulation." << std::endl;
+        std::cout << "Cycle: " << cycleCount << "\n";
+        // Fetch the instruction from instruction memory based on the current pc.
+        auto fetchIt = instrMemory.find(pc);
+        if (fetchIt == instrMemory.end()) {
+            std::cout << "[Fetch] No instruction at PC=0x" << std::hex << pc 
+                      << ". Halting simulation.\n";
             break;
         }
-        instructionRegister = instructionMemory[programCounter];
-        std::cout << "[Fetch] PC = 0x" << std::hex << programCounter
-                  << ", IR = 0x" << instructionRegister << std::dec << std::endl;
-        if (isTerminationInstruction(instructionRegister)) {
-            std::cout << "[Fetch] Termination instruction encountered. Exiting simulation." << std::endl;
+        ir = fetchIt->second;
+        std::cout << "[Fetch] PC=0x" << std::hex << pc 
+                  << " IR=0x" << ir << std::dec << "\n";
+
+        // Check if the fetched instruction indicates termination.
+        if (isTerminatorInstruction(ir)) {
+            std::cout << "[Fetch] Termination instruction encountered (0x00000000).\n";
             break;
         }
-        
-        // Decode Stage.
-        DecodedInstruction decoded = decodeInstruction(instructionRegister);
-        std::cout << "[Decode] opcode=0x" << std::hex << decoded.opcode
-                  << " rd=" << std::dec << decoded.rd
-                  << " rs1=" << decoded.rs1
-                  << " rs2=" << decoded.rs2
-                  << " funct3=0x" << std::hex << decoded.funct3
-                  << " funct7=0x" << decoded.funct7
-                  << " immediate=" << std::dec << decoded.immediate << std::endl;
-        
-        // Operand Setup.
-        operandA = registers[decoded.rs1];
-        if (decoded.opcode == 0x13 || decoded.opcode == 0x03 ||
-            decoded.opcode == 0x67 || decoded.opcode == 0x37 ||
-            decoded.opcode == 0x23) {
-            operandB = decoded.immediate;
-        } else if (decoded.opcode == 0x17) { // AUIPC
-            operandA = programCounter;
-            operandB = decoded.immediate;
+
+        // Decode the fetched instruction.
+        InstructionComponents inst = decodeInstruction(ir);
+        std::cout << "[Decode] opCode=0x" << std::hex << inst.opCode
+                  << " rd=" << inst.rd << " rs1=" << inst.rs1
+                  << " rs2=" << inst.rs2 << " func3=0x" << inst.func3
+                  << " func7=0x" << inst.func7 << " imm=" << std::dec << inst.imm << "\n";
+
+        // Prepare the operands for execution.
+        operand1 = cpuRegisters[inst.rs1];
+        if (inst.opCode == 0x13 || inst.opCode == 0x03 ||
+            inst.opCode == 0x67 || inst.opCode == 0x37 ||
+            inst.opCode == 0x23) {
+            operand2 = inst.imm;
+        } else if (inst.opCode == 0x17) {
+            operand1 = pc;
+            operand2 = inst.imm;
         } else {
-            operandB = registers[decoded.rs2];
+            operand2 = cpuRegisters[inst.rs2];
         }
-        operandM = registers[decoded.rs2];  // For store operations.
-        
-        uint32_t nextPC = programCounter + 4;
-        aluResult = 0;
-        writeBackResult = 0;
-        
-        // Execute Stage.
-        switch(decoded.opcode) {
-            // R-type Instructions.
+        storeValue = cpuRegisters[inst.rs2];
+
+        uint32_t updatedPC = pc + 4;
+        aluOutput = 0;
+        writeBackData = 0;
+
+        // Execution Stage: Process the instruction based on its opcode.
+        switch (inst.opCode) {
+            // --- R-type Instructions (opcode 0x33)
             case 0x33:
-                switch(decoded.funct3) {
+                switch (inst.func3) {
                     case 0x0:
-                        if (decoded.funct7 == 0x00) {
-                            aluResult = operandA + operandB;
-                            std::cout << "[Execute] ADD: " << operandA << " + " << operandB
-                                      << " = " << aluResult << std::endl;
-                        } else if (decoded.funct7 == 0x20) {
-                            aluResult = operandA - operandB;
-                            std::cout << "[Execute] SUB: " << operandA << " - " << operandB
-                                      << " = " << aluResult << std::endl;
-                        } else if (decoded.funct7 == 0x01) {
-                            aluResult = operandA * operandB;
-                            std::cout << "[Execute] MUL: " << operandA << " * " << operandB
-                                      << " = " << aluResult << std::endl;
+                        if (inst.func7 == 0x00) {
+                            aluOutput = operand1 + operand2;
+                            std::cout << "[Execute] ADD: " << operand1 << " + " << operand2 
+                                      << " = " << aluOutput << "\n";
+                        } else if (inst.func7 == 0x20) {
+                            aluOutput = operand1 - operand2;
+                            std::cout << "[Execute] SUB: " << operand1 << " - " << operand2 
+                                      << " = " << aluOutput << "\n";
+                        } else if (inst.func7 == 0x01) {
+                            aluOutput = operand1 * operand2;
+                            std::cout << "[Execute] MUL: " << operand1 << " * " << operand2 
+                                      << " = " << aluOutput << "\n";
                         }
                         break;
                     case 0x4:
-                        if (decoded.funct7 == 0x00) {
-                            aluResult = operandA ^ operandB;
-                            std::cout << "[Execute] XOR: " << operandA << " ^ " << operandB
-                                      << " = " << aluResult << std::endl;
-                        } else if (decoded.funct7 == 0x01) {
-                            if (operandB == 0) {
-                                aluResult = 0;
-                                std::cout << "[Execute] DIV: Division by zero!" << std::endl;
+                        if (inst.func7 == 0x00) {
+                            aluOutput = operand1 ^ operand2;
+                            std::cout << "[Execute] XOR: " << operand1 << " ^ " << operand2 
+                                      << " = " << aluOutput << "\n";
+                        } else if (inst.func7 == 0x01) {
+                            if (operand2 == 0) {
+                                aluOutput = 0;
+                                std::cout << "[Execute] DIV: Division by zero detected!\n";
                             } else {
-                                aluResult = operandA / operandB;
-                                std::cout << "[Execute] DIV: " << operandA << " / " << operandB
-                                          << " = " << aluResult << std::endl;
+                                aluOutput = operand1 / operand2;
+                                std::cout << "[Execute] DIV: " << operand1 << " / " << operand2 
+                                          << " = " << aluOutput << "\n";
                             }
                         }
                         break;
                     case 0x6:
-                        if (decoded.funct7 == 0x00) {
-                            aluResult = operandA | operandB;
-                            std::cout << "[Execute] OR: " << operandA << " | " << operandB
-                                      << " = " << aluResult << std::endl;
-                        } else if (decoded.funct7 == 0x01) {
-                            if (operandB == 0) {
-                                aluResult = 0;
-                                std::cout << "[Execute] REM: Division by zero!" << std::endl;
+                        if (inst.func7 == 0x00) {
+                            aluOutput = operand1 | operand2;
+                            std::cout << "[Execute] OR: " << operand1 << " | " << operand2 
+                                      << " = " << aluOutput << "\n";
+                        } else if (inst.func7 == 0x01) {
+                            if (operand2 == 0) {
+                                aluOutput = 0;
+                                std::cout << "[Execute] REM: Division by zero for remainder!\n";
                             } else {
-                                aluResult = operandA % operandB;
-                                std::cout << "[Execute] REM: " << operandA << " % " << operandB
-                                          << " = " << aluResult << std::endl;
+                                aluOutput = operand1 % operand2;
+                                std::cout << "[Execute] REM: " << operand1 << " % " << operand2 
+                                          << " = " << aluOutput << "\n";
                             }
                         }
                         break;
                     case 0x7:
-                        aluResult = operandA & operandB;
-                        std::cout << "[Execute] AND: " << operandA << " & " << operandB
-                                  << " = " << aluResult << std::endl;
+                        aluOutput = operand1 & operand2;
+                        std::cout << "[Execute] AND: " << operand1 << " & " << operand2 
+                                  << " = " << aluOutput << "\n";
                         break;
                     case 0x1: {
-                        int shiftAmt = operandB & 0x1F;
-                        aluResult = operandA << shiftAmt;
-                        std::cout << "[Execute] SLL: " << operandA << " << " << shiftAmt
-                                  << " = " << aluResult << std::endl;
-                    } break;
+                        int shiftAmt = operand2 & 0x1F;
+                        aluOutput = operand1 << shiftAmt;
+                        std::cout << "[Execute] SLL: " << operand1 << " << " << shiftAmt 
+                                  << " = " << aluOutput << "\n";
+                        break;
+                    }
                     case 0x2:
-                        aluResult = (operandA < operandB) ? 1 : 0;
-                        std::cout << "[Execute] SLT: (" << operandA << " < " << operandB
-                                  << ") = " << aluResult << std::endl;
+                        aluOutput = (operand1 < operand2) ? 1 : 0;
+                        std::cout << "[Execute] SLT: " << aluOutput << "\n";
                         break;
                     case 0x5: {
-                        int shiftAmt = operandB & 0x1F;
-                        if (decoded.funct7 == 0x00) {
-                            aluResult = static_cast<uint32_t>(operandA) >> shiftAmt;
-                            std::cout << "[Execute] SRL: " << operandA << " >> " << shiftAmt
-                                      << " = " << aluResult << std::endl;
-                        } else if (decoded.funct7 == 0x20) {
-                            aluResult = operandA >> shiftAmt;
-                            std::cout << "[Execute] SRA: " << operandA << " >> " << shiftAmt
-                                      << " = " << aluResult << std::endl;
+                        int shiftAmt = operand2 & 0x1F;
+                        if (inst.func7 == 0x00) {
+                            aluOutput = static_cast<int32_t>(static_cast<uint32_t>(operand1) >> shiftAmt);
+                            std::cout << "[Execute] SRL: " << aluOutput << "\n";
+                        } else if (inst.func7 == 0x20) {
+                            aluOutput = operand1 >> shiftAmt;
+                            std::cout << "[Execute] SRA: " << aluOutput << "\n";
                         }
-                    } break;
+                        break;
+                    }
                     default:
-                        std::cout << "[Execute] Unimplemented R-type funct3" << std::endl;
+                        std::cout << "[Execute] R-type: Unsupported func3 value.\n";
                         break;
                 }
-                writeBackResult = aluResult;
+                writeBackData = aluOutput;
                 break;
-            // I-type ALU Instructions.
+
+            // --- I-type ALU Operations (opcode 0x13)
             case 0x13:
-                switch(decoded.funct3) {
+                switch (inst.func3) {
                     case 0x0:
-                        aluResult = operandA + operandB;
-                        std::cout << "[Execute] ADDI: " << operandA << " + " << operandB
-                                  << " = " << aluResult << std::endl;
+                        aluOutput = operand1 + operand2;
+                        std::cout << "[Execute] ADDI: " << aluOutput << "\n";
                         break;
                     case 0x7:
-                        aluResult = operandA & operandB;
-                        std::cout << "[Execute] ANDI: " << operandA << " & " << operandB
-                                  << " = " << aluResult << std::endl;
+                        aluOutput = operand1 & operand2;
+                        std::cout << "[Execute] ANDI: " << aluOutput << "\n";
                         break;
                     case 0x6:
-                        aluResult = operandA | operandB;
-                        std::cout << "[Execute] ORI: " << operandA << " | " << operandB
-                                  << " = " << aluResult << std::endl;
+                        aluOutput = operand1 | operand2;
+                        std::cout << "[Execute] ORI: " << aluOutput << "\n";
                         break;
                     case 0x4:
-                        aluResult = operandA ^ operandB;
-                        std::cout << "[Execute] XORI: " << operandA << " ^ " << operandB
-                                  << " = " << aluResult << std::endl;
+                        aluOutput = operand1 ^ operand2;
+                        std::cout << "[Execute] XORI: " << aluOutput << "\n";
                         break;
                     case 0x2:
-                        aluResult = (operandA < operandB) ? 1 : 0;
-                        std::cout << "[Execute] SLTI: (" << operandA << " < " << operandB
-                                  << ") = " << aluResult << std::endl;
+                        aluOutput = (operand1 < operand2) ? 1 : 0;
+                        std::cout << "[Execute] SLTI: " << aluOutput << "\n";
                         break;
                     case 0x1: {
-                        int shiftAmt = operandB & 0x1F;
-                        aluResult = operandA << shiftAmt;
-                        std::cout << "[Execute] SLLI: " << operandA << " << " << shiftAmt
-                                  << " = " << aluResult << std::endl;
-                    } break;
+                        int shiftAmt = operand2 & 0x1F;
+                        aluOutput = operand1 << shiftAmt;
+                        std::cout << "[Execute] SLLI: " << aluOutput << "\n";
+                        break;
+                    }
                     case 0x5: {
-                        int shiftAmt = operandB & 0x1F;
-                        int topExtension = (operandB >> 5) & 0x7F;
-                        if (topExtension == 0x00) {
-                            aluResult = static_cast<uint32_t>(operandA) >> shiftAmt;
-                            std::cout << "[Execute] SRLI: " << operandA << " >> " << shiftAmt
-                                      << " = " << aluResult << std::endl;
-                        } else if (topExtension == 0x20) {
-                            aluResult = operandA >> shiftAmt;
-                            std::cout << "[Execute] SRAI: " << operandA << " >> " << shiftAmt
-                                      << " = " << aluResult << std::endl;
-                        } else {
-                            std::cout << "[Execute] Unknown I-type shift extension." << std::endl;
+                        int shiftAmt = operand2 & 0x1F;
+                        int highBits = (operand2 >> 5) & 0x7F;
+                        if (highBits == 0x00) {
+                            aluOutput = static_cast<int32_t>(static_cast<uint32_t>(operand1) >> shiftAmt);
+                            std::cout << "[Execute] SRLI: " << aluOutput << "\n";
+                        } else if (highBits == 0x20) {
+                            aluOutput = operand1 >> shiftAmt;
+                            std::cout << "[Execute] SRAI: " << aluOutput << "\n";
                         }
-                    } break;
+                        break;
+                    }
                     default:
-                        std::cout << "[Execute] Unimplemented I-type funct3" << std::endl;
+                        std::cout << "[Execute] I-type: Unsupported func3 value.\n";
                         break;
                 }
-                writeBackResult = aluResult;
+                writeBackData = aluOutput;
                 break;
-            // I-type LOAD Instructions.
+
+            // --- LOAD Instructions (opcode 0x03)
             case 0x03: {
-                uint32_t effectiveAddr = operandA + decoded.immediate;
-                aluResult = effectiveAddr; // Effective address.
-                switch(decoded.funct3) {
-                    case 0x0: {
-                        int8_t loadedByte = dataSegment.readByte(effectiveAddr);
-                        memoryDataRegister = loadedByte;
-                        writeBackResult = memoryDataRegister;
-                        std::cout << "[Execute] LB: loaded byte " << static_cast<int>(loadedByte)
-                                  << " from 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
-                    case 0x1: {
-                        int16_t loadedHalf = 0;
-                        for (int i = 0; i < 2; ++i) {
-                            uint8_t byte = 0;
-                            if (dataSegment.storage.find(effectiveAddr + i) != dataSegment.storage.end())
-                                byte = dataSegment.storage[effectiveAddr + i];
-                            loadedHalf |= (byte << (8 * i));
-                        }
-                        memoryDataRegister = loadedHalf;
-                        writeBackResult = memoryDataRegister;
-                        std::cout << "[Execute] LH: loaded halfword " << loadedHalf
-                                  << " from 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
-                    case 0x2: {
-                        int32_t loadedWord = dataSegment.readWord(effectiveAddr);
-                        memoryDataRegister = loadedWord;
-                        writeBackResult = memoryDataRegister;
-                        std::cout << "[Execute] LW: loaded word " << loadedWord
-                                  << " from 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
+                uint32_t effectiveAddr = operand1 + inst.imm;
+                MemorySegment* memSeg = selectMemorySegment(effectiveAddr);
+                if (!memSeg) {
+                    std::cout << "[Execute] LOAD: Invalid memory access at 0x" 
+                              << std::hex << effectiveAddr << std::dec << "\n";
+                    break;
+                }
+                aluOutput = effectiveAddr;
+                switch (inst.func3) {
+                    case 0x0: { // LB
+                        int8_t byteVal = memSeg->readByte(effectiveAddr);
+                        memDataReg = byteVal;
+                        writeBackData = memDataReg;
+                        std::cout << "[Execute] LB: Loaded " << static_cast<int>(byteVal) << "\n";
+                        break;
+                    }
+                    case 0x1: { // LH
+                        int16_t halfVal = 0;
+                        halfVal |= (memSeg->readByte(effectiveAddr) & 0xFF);
+                        halfVal |= (memSeg->readByte(effectiveAddr + 1) & 0xFF) << 8;
+                        memDataReg = halfVal;
+                        writeBackData = memDataReg;
+                        std::cout << "[Execute] LH: Loaded " << halfVal << "\n";
+                        break;
+                    }
+                    case 0x2: { // LW
+                        int32_t wordVal = memSeg->readWord(effectiveAddr);
+                        memDataReg = wordVal;
+                        writeBackData = memDataReg;
+                        std::cout << "[Execute] LW: Loaded " << wordVal << "\n";
+                        break;
+                    }
                     default:
-                        std::cout << "[Execute] Unimplemented LOAD funct3" << std::endl;
+                        std::cout << "[Execute] LOAD: Unsupported func3 value.\n";
                         break;
                 }
+                break;
             }
-            break;
-            // S-type STORE Instructions.
+
+            // --- STORE Instructions (opcode 0x23)
             case 0x23: {
-                uint32_t effectiveAddr = operandA + decoded.immediate;
-                aluResult = effectiveAddr;
-                switch(decoded.funct3) {
-                    case 0x0: {
-                        int8_t byteToStore = static_cast<int8_t>(operandM & 0xFF);
-                        dataSegment.writeByte(effectiveAddr, byteToStore);
-                        std::cout << "[Execute] SB: stored byte " << static_cast<int>(byteToStore)
-                                  << " to 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
-                    case 0x1: {
-                        int16_t halfToStore = static_cast<int16_t>(operandM & 0xFFFF);
-                        for (int i = 0; i < 2; ++i) {
-                            dataSegment.writeByte(effectiveAddr + i, (halfToStore >> (8 * i)) & 0xFF);
-                        }
-                        std::cout << "[Execute] SH: stored halfword " << halfToStore
-                                  << " to 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
-                    case 0x2: {
-                        dataSegment.writeWord(effectiveAddr, operandM);
-                        std::cout << "[Execute] SW: stored word " << operandM
-                                  << " to 0x" << std::hex << effectiveAddr << std::dec << std::endl;
-                    } break;
+                uint32_t effectiveAddr = operand1 + inst.imm;
+                MemorySegment* memSeg = selectMemorySegment(effectiveAddr);
+                if (!memSeg) {
+                    std::cout << "[Execute] STORE: Invalid memory access at 0x" 
+                              << std::hex << effectiveAddr << std::dec << "\n";
+                    break;
+                }
+                aluOutput = effectiveAddr;
+                switch (inst.func3) {
+                    case 0x0: { // SB
+                        memSeg->writeByte(effectiveAddr, static_cast<int8_t>(storeValue & 0xFF));
+                        std::cout << "[Execute] SB: Stored byte " << (storeValue & 0xFF) << "\n";
+                        break;
+                    }
+                    case 0x1: { // SH
+                        int16_t halfToStore = static_cast<int16_t>(storeValue & 0xFFFF);
+                        memSeg->writeByte(effectiveAddr, static_cast<uint8_t>(halfToStore & 0xFF));
+                        memSeg->writeByte(effectiveAddr + 1, static_cast<uint8_t>((halfToStore >> 8) & 0xFF));
+                        std::cout << "[Execute] SH: Stored half-word " << halfToStore << "\n";
+                        break;
+                    }
+                    case 0x2: { // SW
+                        memSeg->writeWord(effectiveAddr, storeValue);
+                        std::cout << "[Execute] SW: Stored word " << storeValue << "\n";
+                        break;
+                    }
                     default:
-                        std::cout << "[Execute] Unimplemented STORE funct3" << std::endl;
+                        std::cout << "[Execute] STORE: Unsupported func3 value.\n";
                         break;
                 }
+                break;
             }
-            break;
-            // SB-type Branch Instructions.
-            case 0x63: {
-                switch(decoded.funct3) {
-                    case 0x0:
-                        if (operandA == operandM) {
-                            nextPC = programCounter + decoded.immediate;
-                            std::cout << "[Execute] BEQ taken: new PC = 0x" << std::hex << nextPC << std::dec << std::endl;
+
+            // --- Branch Instructions (opcode 0x63)
+            case 0x63:
+                switch (inst.func3) {
+                    case 0x0: // BEQ
+                        if (operand1 == storeValue) {
+                            updatedPC = pc + inst.imm;
+                            std::cout << "[Execute] BEQ: Branch taken.\n";
                         } else {
-                            std::cout << "[Execute] BEQ not taken." << std::endl;
+                            std::cout << "[Execute] BEQ: Branch not taken.\n";
                         }
                         break;
-                    case 0x1:
-                        if (operandA != operandM) {
-                            nextPC = programCounter + decoded.immediate;
-                            std::cout << "[Execute] BNE taken: new PC = 0x" << std::hex << nextPC << std::dec << std::endl;
+                    case 0x1: // BNE
+                        if (operand1 != storeValue) {
+                            updatedPC = pc + inst.imm;
+                            std::cout << "[Execute] BNE: Branch taken.\n";
                         } else {
-                            std::cout << "[Execute] BNE not taken." << std::endl;
+                            std::cout << "[Execute] BNE: Branch not taken.\n";
                         }
                         break;
-                    case 0x4:
-                        if (operandA < operandM) {
-                            nextPC = programCounter + decoded.immediate;
-                            std::cout << "[Execute] BLT taken: new PC = 0x" << std::hex << nextPC << std::dec << std::endl;
+                    case 0x4: // BLT
+                        if (operand1 < storeValue) {
+                            updatedPC = pc + inst.imm;
+                            std::cout << "[Execute] BLT: Branch taken.\n";
                         } else {
-                            std::cout << "[Execute] BLT not taken." << std::endl;
+                            std::cout << "[Execute] BLT: Branch not taken.\n";
                         }
                         break;
-                    case 0x5:
-                        if (operandA >= operandM) {
-                            nextPC = programCounter + decoded.immediate;
-                            std::cout << "[Execute] BGE taken: new PC = 0x" << std::hex << nextPC << std::dec << std::endl;
+                    case 0x5: // BGE
+                        if (operand1 >= storeValue) {
+                            updatedPC = pc + inst.imm;
+                            std::cout << "[Execute] BGE: Branch taken.\n";
                         } else {
-                            std::cout << "[Execute] BGE not taken." << std::endl;
+                            std::cout << "[Execute] BGE: Branch not taken.\n";
                         }
                         break;
                     default:
-                        std::cout << "[Execute] Unimplemented branch funct3." << std::endl;
+                        std::cout << "[Execute] Branch: Unsupported func3 value.\n";
                         break;
                 }
-            }
-            break;
-            // UJ-type: JAL Instruction.
-            case 0x6F: {
-                aluResult = programCounter + 4; // Save return address.
-                nextPC = programCounter + decoded.immediate;
-                std::cout << "[Execute] JAL: Jump to 0x" << std::hex << nextPC
-                          << " with return address 0x" << (programCounter + 4) << std::dec << std::endl;
-                writeBackResult = aluResult;
-            }
-            break;
-            // I-type: JALR Instruction.
-            case 0x67: {
-                aluResult = programCounter + 4; // Save return address.
-                uint32_t target = static_cast<uint32_t>((operandA + decoded.immediate) & ~1);
-                nextPC = target;
-                std::cout << "[Execute] JALR: Jump to 0x" << std::hex << nextPC
-                          << " with return address 0x" << (programCounter + 4) << std::dec << std::endl;
-                writeBackResult = aluResult;
-            }
-            break;
-            // U-type: LUI Instruction.
-            case 0x37: {
-                aluResult = decoded.immediate;
-                std::cout << "[Execute] LUI: Result = 0x" << std::hex << aluResult << std::dec << std::endl;
-                writeBackResult = aluResult;
-            }
-            break;
-            // U-type: AUIPC Instruction.
-            case 0x17: {
-                aluResult = programCounter + decoded.immediate;
-                std::cout << "[Execute] AUIPC: Result = 0x" << std::hex << aluResult << std::dec << std::endl;
-                writeBackResult = aluResult;
-            }
-            break;
+                break;
+
+            // --- Jump and Link Instructions
+            case 0x6F: // JAL
+                aluOutput = pc + 4;
+                updatedPC = pc + inst.imm;
+                writeBackData = aluOutput;
+                std::cout << "[Execute] JAL: Jumping to 0x" << std::hex << updatedPC 
+                          << std::dec << "\n";
+                break;
+            case 0x67: // JALR
+                aluOutput = pc + 4;
+                {
+                    uint32_t jumpTarget = (operand1 + inst.imm) & ~1U;
+                    updatedPC = jumpTarget;
+                    writeBackData = aluOutput;
+                    std::cout << "[Execute] JALR: Jumping to 0x" << std::hex << updatedPC 
+                              << std::dec << "\n";
+                }
+                break;
+            // --- Upper Immediate Instructions
+            case 0x37: // LUI
+                aluOutput = inst.imm;
+                writeBackData = aluOutput;
+                std::cout << "[Execute] LUI: Loaded upper immediate " << aluOutput << "\n";
+                break;
+            case 0x17: // AUIPC
+                aluOutput = pc + inst.imm;
+                writeBackData = aluOutput;
+                std::cout << "[Execute] AUIPC: Computed " << aluOutput << "\n";
+                break;
             default:
-                std::cout << "[Execute] Unknown or unimplemented opcode: 0x" 
-                          << std::hex << decoded.opcode << std::dec << std::endl;
+                std::cout << "[Execute] Unhandled opcode: 0x" << std::hex 
+                          << inst.opCode << std::dec << "\n";
                 break;
         }
-        
-        // Write-Back Stage: Update destination register (if not register 0).
-        switch(decoded.opcode) {
+
+        // Write-back Stage: Update destination register if needed.
+        switch (inst.opCode) {
             case 0x33: // R-type
             case 0x13: // I-type ALU
             case 0x17: // AUIPC
@@ -709,36 +751,45 @@ int main(int argc, char* argv[]) {
             case 0x03: // LOAD
             case 0x6F: // JAL
             case 0x67: // JALR
-                if (decoded.rd != 0) {
-                    registers[decoded.rd] = writeBackResult;
-                    std::cout << "[WB] Updated R[" << decoded.rd << "] = " 
-                              << registers[decoded.rd] << std::endl;
+                if (inst.rd != 0) {
+                    cpuRegisters[inst.rd] = writeBackData;
+                    std::cout << "[WB] Register R[" << inst.rd << "] updated to " 
+                              << cpuRegisters[inst.rd] << "\n";
                 }
                 break;
             default:
+                // No write-back for branch or store instructions.
                 break;
         }
-        
-        // Ensure register 0 remains 0.
-        registers[0] = 0;
-        programCounter = nextPC;
-        displayRegisters();
+
+        // Ensure register zero remains 0.
+        cpuRegisters[0] = 0;
+        // Update the program counter for the next cycle.
+        pc = updatedPC;
+
+        // Display the updated CPU register state.
+        displayRegisterState();
+
+        // Update memory dump files after each cycle.
+        dumpInstrMemoryToFile("instruction.mc");
+        dumpMemorySegmentToFile("data.mc", dataMemory, 0x10000000, 0x7FFFFFFF);
+        dumpMemorySegmentToFile("stack.mc", stackMemory, 0x7FFFFFFF, 0xFFFFFFFF);
+
         cycleCount++;
-        
-        // If not running continuously, prompt the user.
-        if (!runToEnd) {
-            std::cout << "Enter N for next instruction, R for run-to-end, or E to exit: ";
-            std::cin >> userChoice;
-            if (userChoice == 'E' || userChoice == 'e') {
-                std::cout << "Exiting simulation per user request." << std::endl;
+
+        // If not in continuous run mode, prompt the user for further action.
+        if (!continuousRun) {
+            std::cout << "Enter N for next cycle, R to run continuously, or E to exit: ";
+            std::cin >> command;
+            if (command == 'E' || command == 'e') {
+                std::cout << "Simulation terminated by user.\n";
                 break;
-            } else if (userChoice == 'R' || userChoice == 'r') {
-                runToEnd = true;
+            } else if (command == 'R' || command == 'r') {
+                continuousRun = true;
             }
         }
     }
-    
-    std::cout << "Simulation complete after " << cycleCount << " cycles." << std::endl;
-    dataSegment.updateInputFile(argv[1]);
+
+    std::cout << "Simulation completed after " << cycleCount << " cycles.\n";
     return 0;
 }
