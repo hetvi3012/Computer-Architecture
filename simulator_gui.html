@@ -1,3 +1,7 @@
+//Hetvi Bagdai 2023CSB1123
+//Tanisha Gupta 2023CSB1170
+//Yashasvi Chaudhary 2023CSB1174
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,7 +17,7 @@
       color: #333;
     }
     .container {
-      max-width: 1200px;
+      max-width: 1400px;
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -29,16 +33,13 @@
       border-radius: 8px;
       padding: 15px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      height: fit-content;
     }
     .panel h2 {
       margin-top: 0;
       border-bottom: 1px solid #eee;
       padding-bottom: 10px;
       color: #2c3e50;
-    }
-    .flex-row {
-      display: flex;
-      gap: 15px;
     }
     .control-panel {
       grid-column: 1 / -1;
@@ -72,7 +73,7 @@
     }
     textarea {
       width: 100%;
-      height: 200px;
+      height: 300px;
       font-family: monospace;
       padding: 10px;
       resize: vertical;
@@ -189,21 +190,39 @@
     .breakpoint-checkbox {
       margin-right: 10px;
     }
+    .memory-segment-selector {
+      margin-bottom: 10px;
+    }
+    .memory-segment-selector button {
+      padding: 5px 10px;
+      font-size: 0.9em;
+    }
+    .memory-segment-selector button.active {
+      background-color: #2c3e50;
+    }
+    .memory-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="title">
       <h1>RISC-V Simulator</h1>
+      <p>2023CSB1123 Hetvi Bagdai | 2023CSB1174 Yashasvi Chaudhary | 2023CSB1170 Tanisha Gupta</p>
     </div>
     
     <div class="panel control-panel">
       <h2>Controls</h2>
       <div class="input-group">
         <label for="file-input">Input File:</label>
-        <input type="file" id="file-input" accept=".txt,.hex">
+        <input type="file" id="file-input" accept=".mc,.txt">
         <button id="load-file">Load</button>
-        <button id="save-file">Save Data Segment</button>
+        <button id="save-data">Save Data Segment</button>
+        <button id="save-stack">Save Stack Segment</button>
         <div id="cycle-counter">Cycle: 0</div>
       </div>
       <div class="button-group">
@@ -220,6 +239,15 @@
         <textarea id="code-textarea" placeholder="Enter machine code here (format: 0x00000000 0x00000000)"></textarea>
       </div>
       <div class="tab-content" id="memory-tab">
+        <div class="memory-segment-selector">
+          <button id="show-instructions" class="active">Instructions</button>
+          <button id="show-data">Data Segment</button>
+          <button id="show-stack">Stack Segment</button>
+        </div>
+        <div class="memory-header">
+          <span>Address</span>
+          <span>Value</span>
+        </div>
         <div class="memory-grid" id="memory-display">
           <!-- Memory will be populated here -->
         </div>
@@ -248,25 +276,27 @@
     // Global CPU State 
     const NUM_REGS = 32;
     let registers = new Array(NUM_REGS).fill(0);
-    let programCounter = 0;
-    let instructionRegister = 0;
-    let operandA = 0;
-    let operandB = 0;
-    let operandM = 0;
-    let aluResult = 0;
-    let writeBackResult = 0;
-    let memoryDataRegister = 0;
-    let cycleCount = 0;
+    registers[2] = 0x7FFFFFFF; // Initialize stack pointer (x2)
     
-    // Memory
+    let pc = 0;                 // Program Counter
+    let ir = 0;                 // Instruction Register
+    let operand1 = 0;           // First ALU operand
+    let operand2 = 0;           // Second ALU operand
+    let storeValue = 0;         // Value for store instructions
+    let aluOutput = 0;          // ALU result
+    let writeBackData = 0;      // Data to write back
+    let memDataReg = 0;         // Memory data register
+    let cycleCount = 0;         // Cycle counter
+    
+    // Memory segments
     let instructionMemory = {};
-    let dataSegment = {
-      storage: {}
-    };
+    let dataMemory = { storage: {} };
+    let stackMemory = { storage: {} };
     
     // Simulation control
     let isRunning = false;
     let runInterval = null;
+    let currentMemorySegment = 'instructions';
     
     // DOM Elements
     const codeTextarea = document.getElementById('code-textarea');
@@ -282,8 +312,14 @@
     const stopButton = document.getElementById('stop-button');
     const resetButton = document.getElementById('reset-button');
     const loadFileButton = document.getElementById('load-file');
-    const saveFileButton = document.getElementById('save-file');
+    const saveDataButton = document.getElementById('save-data');
+    const saveStackButton = document.getElementById('save-stack');
     const fileInput = document.getElementById('file-input');
+    
+    // Memory segment buttons
+    const showInstructionsBtn = document.getElementById('show-instructions');
+    const showDataBtn = document.getElementById('show-data');
+    const showStackBtn = document.getElementById('show-stack');
     
     // Tabs
     const tabs = document.querySelectorAll('.tab');
@@ -306,8 +342,8 @@
         const regBox = document.createElement('div');
         regBox.className = 'register-box';
         regBox.innerHTML = `
-          <span class="register-name">R[${i}]</span>
-          <span class="register-value" id="reg-${i}">0</span>
+          <span class="register-name">x${i}</span>
+          <span class="register-value" id="reg-${i}">${registers[i]}</span>
         `;
         registerFileElement.appendChild(regBox);
       }
@@ -320,35 +356,35 @@
       specialRegistersElement.innerHTML = `
         <div class="special-register">
           <span class="register-name">PC</span>
-          <span>0x${programCounter.toString(16).padStart(8, '0')}</span>
+          <span>0x${pc.toString(16).padStart(8, '0')}</span>
         </div>
         <div class="special-register">
           <span class="register-name">IR</span>
-          <span>0x${instructionRegister.toString(16).padStart(8, '0')}</span>
+          <span>0x${ir.toString(16).padStart(8, '0')}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">operandA</span>
-          <span>${operandA}</span>
+          <span class="register-name">operand1</span>
+          <span>${operand1}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">operandB</span>
-          <span>${operandB}</span>
+          <span class="register-name">operand2</span>
+          <span>${operand2}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">operandM</span>
-          <span>${operandM}</span>
+          <span class="register-name">storeValue</span>
+          <span>${storeValue}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">ALU Result</span>
-          <span>${aluResult}</span>
+          <span class="register-name">ALU Output</span>
+          <span>${aluOutput}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">WB Result</span>
-          <span>${writeBackResult}</span>
+          <span class="register-name">WB Data</span>
+          <span>${writeBackData}</span>
         </div>
         <div class="special-register">
-          <span class="register-name">Memory Data</span>
-          <span>${memoryDataRegister}</span>
+          <span class="register-name">Mem Data</span>
+          <span>${memDataReg}</span>
         </div>
       `;
     }
@@ -378,7 +414,8 @@
     // Load machine code from textarea
     function loadMachineCode() {
       instructionMemory = {};
-      dataSegment.storage = {};
+      dataMemory.storage = {};
+      stackMemory.storage = {};
       
       const lines = codeTextarea.value.trim().split('\n');
       for (const line of lines) {
@@ -404,10 +441,15 @@
           
           if (address < 0x10000000) {
             instructionMemory[address] = data;
-          } else {
-            // Store data byte by byte
+          } else if (address < 0x7FFFFFFF) {
+            // Store in data segment
             for (let i = 0; i < 4; i++) {
-              dataSegment.storage[address + i] = (data >> (8 * i)) & 0xFF;
+              dataMemory.storage[address + i] = (data >> (8 * i)) & 0xFF;
+            }
+          } else {
+            // Store in stack segment
+            for (let i = 0; i < 4; i++) {
+              stackMemory.storage[address + i] = (data >> (8 * i)) & 0xFF;
             }
           }
         } catch (error) {
@@ -419,58 +461,73 @@
       logToConsole('Machine code loaded successfully.');
     }
     
-    // Update memory display
+    // Update memory display based on current segment
     function updateMemoryDisplay() {
       memoryDisplayElement.innerHTML = '';
       
-      // Display instruction memory
-      const addresses = Object.keys(instructionMemory).sort((a, b) => Number(a) - Number(b));
-      for (const addr of addresses) {
-        const entry = document.createElement('div');
-        entry.className = 'memory-entry';
-        entry.innerHTML = `
-          <input type="checkbox" class="breakpoint-checkbox" data-address="${addr}">
-          <div class="address-col">0x${Number(addr).toString(16).padStart(8, '0')}</div>
-          <div class="data-col">0x${instructionMemory[addr].toString(16).padStart(8, '0')}</div>
-        `;
-        memoryDisplayElement.appendChild(entry);
-      }
-      
-      // Display data segment
-      const dataAddresses = [...new Set(Object.keys(dataSegment.storage).map(addr => Number(addr) - Number(addr) % 4))].sort((a, b) => a - b);
-      for (const baseAddr of dataAddresses) {
-        const word = readWord(baseAddr);
-        const entry = document.createElement('div');
-        entry.className = 'memory-entry';
-        entry.innerHTML = `
-          <div class="address-col">0x${baseAddr.toString(16).padStart(8, '0')}</div>
-          <div class="data-col">0x${word.toString(16).padStart(8, '0')} (${word})</div>
-        `;
-        memoryDisplayElement.appendChild(entry);
+      if (currentMemorySegment === 'instructions') {
+        // Display instruction memory
+        const addresses = Object.keys(instructionMemory).sort((a, b) => Number(a) - Number(b));
+        for (const addr of addresses) {
+          const entry = document.createElement('div');
+          entry.className = 'memory-entry';
+          entry.innerHTML = `
+            <input type="checkbox" class="breakpoint-checkbox" data-address="${addr}">
+            <div class="address-col">0x${Number(addr).toString(16).padStart(8, '0')}</div>
+            <div class="data-col">0x${instructionMemory[addr].toString(16).padStart(8, '0')}</div>
+          `;
+          memoryDisplayElement.appendChild(entry);
+        }
+      } else if (currentMemorySegment === 'data') {
+        // Display data segment
+        const dataAddresses = [...new Set(Object.keys(dataMemory.storage).map(addr => Number(addr) - Number(addr) % 4))].sort((a, b) => a - b);
+        for (const baseAddr of dataAddresses) {
+          const word = readWord(dataMemory, baseAddr);
+          const entry = document.createElement('div');
+          entry.className = 'memory-entry';
+          entry.innerHTML = `
+            <div class="address-col">0x${baseAddr.toString(16).padStart(8, '0')}</div>
+            <div class="data-col">0x${word.toString(16).padStart(8, '0')} (${word})</div>
+          `;
+          memoryDisplayElement.appendChild(entry);
+        }
+      } else if (currentMemorySegment === 'stack') {
+        // Display stack segment
+        const stackAddresses = [...new Set(Object.keys(stackMemory.storage).map(addr => Number(addr) - Number(addr) % 4))].sort((a, b) => a - b);
+        for (const baseAddr of stackAddresses) {
+          const word = readWord(stackMemory, baseAddr);
+          const entry = document.createElement('div');
+          entry.className = 'memory-entry';
+          entry.innerHTML = `
+            <div class="address-col">0x${baseAddr.toString(16).padStart(8, '0')}</div>
+            <div class="data-col">0x${word.toString(16).padStart(8, '0')} (${word})</div>
+          `;
+          memoryDisplayElement.appendChild(entry);
+        }
       }
     }
     
     // Helper functions for data access
-    function readByte(address) {
-      return dataSegment.storage[address] || 0;
+    function readByte(memory, address) {
+      return memory.storage[address] || 0;
     }
     
-    function readWord(address) {
+    function readWord(memory, address) {
       let result = 0;
       for (let i = 0; i < 4; i++) {
-        const byte = readByte(address + i);
+        const byte = readByte(memory, address + i);
         result |= (byte << (8 * i));
       }
       return result;
     }
     
-    function writeByte(address, value) {
-      dataSegment.storage[address] = value & 0xFF;
+    function writeByte(memory, address, value) {
+      memory.storage[address] = value & 0xFF;
     }
     
-    function writeWord(address, value) {
+    function writeWord(memory, address, value) {
       for (let i = 0; i < 4; i++) {
-        writeByte(address + i, (value >> (8 * i)) & 0xFF);
+        writeByte(memory, address + i, (value >> (8 * i)) & 0xFF);
       }
     }
     
@@ -560,48 +617,59 @@
       return instruction === 0;
     }
     
+    // Select appropriate memory segment for data access
+    function selectMemorySegment(address) {
+      if (address < 0x10000000) {
+        return null; // Instruction area - cannot access
+      } else if (address < 0x7FFFFFFF) {
+        return dataMemory;
+      } else {
+        return stackMemory;
+      }
+    }
+    
     // Single simulation step
     function simulationStep() {
       cycleCount++;
       cycleCounter.textContent = `Cycle: ${cycleCount}`;
       
       // Fetch Stage
-      if (!(programCounter in instructionMemory)) {
-        logToConsole(`[Fetch] No instruction at PC = 0x${programCounter.toString(16)}. Ending simulation.`);
+      if (!(pc in instructionMemory)) {
+        logToConsole(`[Fetch] No instruction at PC = 0x${pc.toString(16)}. Ending simulation.`, 'fetch-line');
         stopSimulation();
         return false;
       }
       
-      instructionRegister = instructionMemory[programCounter];
-      logToConsole(`[Fetch] PC = 0x${programCounter.toString(16)}, IR = 0x${instructionRegister.toString(16)}`, 'fetch-line');
+      ir = instructionMemory[pc];
+      logToConsole(`[Fetch] PC = 0x${pc.toString(16)}, IR = 0x${ir.toString(16)}`, 'fetch-line');
       
-      if (isTerminationInstruction(instructionRegister)) {
-        logToConsole('[Fetch] Termination instruction encountered. Exiting simulation.');
+      if (isTerminationInstruction(ir)) {
+        logToConsole('[Fetch] Termination instruction encountered. Exiting simulation.', 'fetch-line');
         stopSimulation();
         return false;
       }
       
       // Decode Stage
-      const decoded = decodeInstruction(instructionRegister);
+      const decoded = decodeInstruction(ir);
       logToConsole(`[Decode] opcode=0x${decoded.opcode.toString(16)} rd=${decoded.rd} rs1=${decoded.rs1} rs2=${decoded.rs2} funct3=0x${decoded.funct3.toString(16)} funct7=0x${decoded.funct7.toString(16)} immediate=${decoded.immediate}`, 'decode-line');
       
       // Operand Setup
-      operandA = registers[decoded.rs1];
+      operand1 = registers[decoded.rs1];
       if (decoded.opcode === 0x13 || decoded.opcode === 0x03 ||
           decoded.opcode === 0x67 || decoded.opcode === 0x37 ||
           decoded.opcode === 0x23) {
-        operandB = decoded.immediate;
+        operand2 = decoded.immediate;
       } else if (decoded.opcode === 0x17) { // AUIPC
-        operandA = programCounter;
-        operandB = decoded.immediate;
+        operand1 = pc;
+        operand2 = decoded.immediate;
       } else {
-        operandB = registers[decoded.rs2];
+        operand2 = registers[decoded.rs2];
       }
-      operandM = registers[decoded.rs2]; // For store operations
+      storeValue = registers[decoded.rs2]; // For store operations
       
-      let nextPC = programCounter + 4;
-      aluResult = 0;
-      writeBackResult = 0;
+      let nextPC = pc + 4;
+      aluOutput = 0;
+      writeBackData = 0;
       
       // Execute Stage - long switch statement for all instruction types
       switch (decoded.opcode) {
@@ -610,111 +678,111 @@
           switch (decoded.funct3) {
             case 0x0:
               if (decoded.funct7 === 0x00) {
-                aluResult = operandA + operandB;
-                logToConsole(`[Execute] ADD: ${operandA} + ${operandB} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 + operand2;
+                logToConsole(`[Execute] ADD: ${operand1} + ${operand2} = ${aluOutput}`, 'execute-line');
               } else if (decoded.funct7 === 0x20) {
-                aluResult = operandA - operandB;
-                logToConsole(`[Execute] SUB: ${operandA} - ${operandB} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 - operand2;
+                logToConsole(`[Execute] SUB: ${operand1} - ${operand2} = ${aluOutput}`, 'execute-line');
               } else if (decoded.funct7 === 0x01) {
-                aluResult = operandA * operandB;
-                logToConsole(`[Execute] MUL: ${operandA} * ${operandB} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 * operand2;
+                logToConsole(`[Execute] MUL: ${operand1} * ${operand2} = ${aluOutput}`, 'execute-line');
               }
               break;
             case 0x4:
               if (decoded.funct7 === 0x00) {
-                aluResult = operandA ^ operandB;
-                logToConsole(`[Execute] XOR: ${operandA} ^ ${operandB} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 ^ operand2;
+                logToConsole(`[Execute] XOR: ${operand1} ^ ${operand2} = ${aluOutput}`, 'execute-line');
               } else if (decoded.funct7 === 0x01) {
-                if (operandB === 0) {
-                  aluResult = 0;
+                if (operand2 === 0) {
+                  aluOutput = 0;
                   logToConsole('[Execute] DIV: Division by zero!', 'execute-line');
                 } else {
-                  aluResult = Math.floor(operandA / operandB);
-                  logToConsole(`[Execute] DIV: ${operandA} / ${operandB} = ${aluResult}`, 'execute-line');
+                  aluOutput = Math.floor(operand1 / operand2);
+                  logToConsole(`[Execute] DIV: ${operand1} / ${operand2} = ${aluOutput}`, 'execute-line');
                 }
               }
               break;
             case 0x6:
               if (decoded.funct7 === 0x00) {
-                aluResult = operandA | operandB;
-                logToConsole(`[Execute] OR: ${operandA} | ${operandB} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 | operand2;
+                logToConsole(`[Execute] OR: ${operand1} | ${operand2} = ${aluOutput}`, 'execute-line');
               } else if (decoded.funct7 === 0x01) {
-                if (operandB === 0) {
-                  aluResult = 0;
+                if (operand2 === 0) {
+                  aluOutput = 0;
                   logToConsole('[Execute] REM: Division by zero!', 'execute-line');
                 } else {
-                  aluResult = operandA % operandB;
-                  logToConsole(`[Execute] REM: ${operandA} % ${operandB} = ${aluResult}`, 'execute-line');
+                  aluOutput = operand1 % operand2;
+                  logToConsole(`[Execute] REM: ${operand1} % ${operand2} = ${aluOutput}`, 'execute-line');
                 }
               }
               break;
             case 0x7:
-              aluResult = operandA & operandB;
-              logToConsole(`[Execute] AND: ${operandA} & ${operandB} = ${aluResult}`, 'execute-line');
+              aluOutput = operand1 & operand2;
+              logToConsole(`[Execute] AND: ${operand1} & ${operand2} = ${aluOutput}`, 'execute-line');
               break;
             case 0x1:
-              const shiftAmt1 = operandB & 0x1F;
-              aluResult = operandA << shiftAmt1;
-              logToConsole(`[Execute] SLL: ${operandA} << ${shiftAmt1} = ${aluResult}`, 'execute-line');
+              const shiftAmt1 = operand2 & 0x1F;
+              aluOutput = operand1 << shiftAmt1;
+              logToConsole(`[Execute] SLL: ${operand1} << ${shiftAmt1} = ${aluOutput}`, 'execute-line');
               break;
             case 0x2:
-              aluResult = (operandA < operandB) ? 1 : 0;
-              logToConsole(`[Execute] SLT: (${operandA} < ${operandB}) = ${aluResult}`, 'execute-line');
+              aluOutput = (operand1 < operand2) ? 1 : 0;
+              logToConsole(`[Execute] SLT: (${operand1} < ${operand2}) = ${aluOutput}`, 'execute-line');
               break;
             case 0x5:
-              const shiftAmt5 = operandB & 0x1F;
+              const shiftAmt5 = operand2 & 0x1F;
               if (decoded.funct7 === 0x00) {
-                aluResult = (operandA >>> shiftAmt5) & 0xFFFFFFFF;
-                logToConsole(`[Execute] SRL: ${operandA} >>> ${shiftAmt5} = ${aluResult}`, 'execute-line');
+                aluOutput = (operand1 >>> shiftAmt5) & 0xFFFFFFFF;
+                logToConsole(`[Execute] SRL: ${operand1} >>> ${shiftAmt5} = ${aluOutput}`, 'execute-line');
               } else if (decoded.funct7 === 0x20) {
-                aluResult = operandA >> shiftAmt5;
-                logToConsole(`[Execute] SRA: ${operandA} >> ${shiftAmt5} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 >> shiftAmt5;
+                logToConsole(`[Execute] SRA: ${operand1} >> ${shiftAmt5} = ${aluOutput}`, 'execute-line');
               }
               break;
             default:
               logToConsole('[Execute] Unimplemented R-type funct3', 'execute-line');
               break;
           }
-          writeBackResult = aluResult;
+          writeBackData = aluOutput;
           break;
           
         // I-type ALU Instructions
         case 0x13:
           switch (decoded.funct3) {
             case 0x0:
-              aluResult = operandA + operandB;
-              logToConsole(`[Execute] ADDI: ${operandA} + ${operandB} = ${aluResult}`, 'execute-line');
+              aluOutput = operand1 + operand2;
+              logToConsole(`[Execute] ADDI: ${operand1} + ${operand2} = ${aluOutput}`, 'execute-line');
               break;
             case 0x7:
-              aluResult = operandA & operandB;
-              logToConsole(`[Execute] ANDI: ${operandA} & ${operandB} = ${aluResult}`, 'execute-line');
+              aluOutput = operand1 & operand2;
+              logToConsole(`[Execute] ANDI: ${operand1} & ${operand2} = ${aluOutput}`, 'execute-line');
               break;
             case 0x6:
-              aluResult = operandA | operandB;
-              logToConsole(`[Execute] ORI: ${operandA} | ${operandB} = ${aluResult}`, 'execute-line');
+              aluOutput = operand1 | operand2;
+              logToConsole(`[Execute] ORI: ${operand1} | ${operand2} = ${aluOutput}`, 'execute-line');
               break;
             case 0x4:
-              aluResult = operandA ^ operandB;
-              logToConsole(`[Execute] XORI: ${operandA} ^ ${operandB} = ${aluResult}`, 'execute-line');
+              aluOutput = operand1 ^ operand2;
+              logToConsole(`[Execute] XORI: ${operand1} ^ ${operand2} = ${aluOutput}`, 'execute-line');
               break;
             case 0x2:
-              aluResult = (operandA < operandB) ? 1 : 0;
-              logToConsole(`[Execute] SLTI: (${operandA} < ${operandB}) = ${aluResult}`, 'execute-line');
+              aluOutput = (operand1 < operand2) ? 1 : 0;
+              logToConsole(`[Execute] SLTI: (${operand1} < ${operand2}) = ${aluOutput}`, 'execute-line');
               break;
             case 0x1:
-              const shiftAmt = operandB & 0x1F;
-              aluResult = operandA << shiftAmt;
-              logToConsole(`[Execute] SLLI: ${operandA} << ${shiftAmt} = ${aluResult}`, 'execute-line');
+              const shiftAmt = operand2 & 0x1F;
+              aluOutput = operand1 << shiftAmt;
+              logToConsole(`[Execute] SLLI: ${operand1} << ${shiftAmt} = ${aluOutput}`, 'execute-line');
               break;
             case 0x5:
-              const shiftAmt2 = operandB & 0x1F;
-              const topExtension = (operandB >> 5) & 0x7F;
+              const shiftAmt2 = operand2 & 0x1F;
+              const topExtension = (operand2 >> 5) & 0x7F;
               if (topExtension === 0x00) {
-                aluResult = (operandA >>> shiftAmt2) & 0xFFFFFFFF;
-                logToConsole(`[Execute] SRLI: ${operandA} >>> ${shiftAmt2} = ${aluResult}`, 'execute-line');
+                aluOutput = (operand1 >>> shiftAmt2) & 0xFFFFFFFF;
+                logToConsole(`[Execute] SRLI: ${operand1} >>> ${shiftAmt2} = ${aluOutput}`, 'execute-line');
               } else if (topExtension === 0x20) {
-                aluResult = operandA >> shiftAmt2;
-                logToConsole(`[Execute] SRAI: ${operandA} >> ${shiftAmt2} = ${aluResult}`, 'execute-line');
+                aluOutput = operand1 >> shiftAmt2;
+                logToConsole(`[Execute] SRAI: ${operand1} >> ${shiftAmt2} = ${aluOutput}`, 'execute-line');
               } else {
                 logToConsole('[Execute] Unknown I-type shift extension.', 'execute-line');
               }
@@ -723,95 +791,109 @@
               logToConsole('[Execute] Unimplemented I-type funct3', 'execute-line');
               break;
           }
-          writeBackResult = aluResult;
+          writeBackData = aluOutput;
           break;
           
         // I-type LOAD Instructions
-        case 0x03:
-          const effectiveAddr = operandA + decoded.immediate;
-          aluResult = effectiveAddr;
+        case 0x03: {
+          const effectiveAddr = operand1 + decoded.immediate;
+          aluOutput = effectiveAddr;
+          const memSeg = selectMemorySegment(effectiveAddr);
+          if (!memSeg) {
+            logToConsole(`[Execute] LOAD: Invalid memory access at 0x${effectiveAddr.toString(16)}`, 'execute-line');
+            break;
+          }
+          
           switch (decoded.funct3) {
-            case 0x0:
-              const loadedByte = readByte(effectiveAddr);
-              memoryDataRegister = extendSign(loadedByte, 8);
-              writeBackResult = memoryDataRegister;
-              logToConsole(`[Execute] LB: loaded byte ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+            case 0x0: // LB
+              const loadedByte = readByte(memSeg, effectiveAddr);
+              memDataReg = extendSign(loadedByte, 8);
+              writeBackData = memDataReg;
+              logToConsole(`[Execute] LB: loaded byte ${memDataReg} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
               break;
-            case 0x1:
+            case 0x1: // LH
               let loadedHalf = 0;
               for (let i = 0; i < 2; i++) {
-                const byte = readByte(effectiveAddr + i);
+                const byte = readByte(memSeg, effectiveAddr + i);
                 loadedHalf |= (byte << (8 * i));
               }
-              memoryDataRegister = extendSign(loadedHalf, 16);
-              writeBackResult = memoryDataRegister;
-              logToConsole(`[Execute] LH: loaded halfword ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+              memDataReg = extendSign(loadedHalf, 16);
+              writeBackData = memDataReg;
+              logToConsole(`[Execute] LH: loaded halfword ${memDataReg} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
               break;
-            case 0x2:
-              const loadedWord = readWord(effectiveAddr);
-              memoryDataRegister = loadedWord;
-              writeBackResult = memoryDataRegister;
-              logToConsole(`[Execute] LW: loaded word ${memoryDataRegister} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
+            case 0x2: // LW
+              const loadedWord = readWord(memSeg, effectiveAddr);
+              memDataReg = loadedWord;
+              writeBackData = memDataReg;
+              logToConsole(`[Execute] LW: loaded word ${memDataReg} from 0x${effectiveAddr.toString(16)}`, 'execute-line');
               break;
             default:
               logToConsole('[Execute] Unimplemented LOAD funct3', 'execute-line');
               break;
           }
           break;
+        }
           
         // S-type STORE Instructions
-        case 0x23:
-          const storeAddr = operandA + decoded.immediate;
-          aluResult = storeAddr;
+        case 0x23: {
+          const storeAddr = operand1 + decoded.immediate;
+          aluOutput = storeAddr;
+          const memSeg = selectMemorySegment(storeAddr);
+          if (!memSeg) {
+            logToConsole(`[Execute] STORE: Invalid memory access at 0x${storeAddr.toString(16)}`, 'execute-line');
+            break;
+          }
+          
           switch (decoded.funct3) {
-            case 0x0:
-              writeByte(storeAddr, operandM & 0xFF);
-              logToConsole(`[Execute] SB: stored byte ${operandM & 0xFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
+            case 0x0: // SB
+              writeByte(memSeg, storeAddr, storeValue & 0xFF);
+              logToConsole(`[Execute] SB: stored byte ${storeValue & 0xFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
               break;
-            case 0x1:
-              writeWord(storeAddr, operandM & 0xFFFF);
-              logToConsole(`[Execute] SH: stored halfword ${operandM & 0xFFFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
+            case 0x1: // SH
+              writeWord(memSeg, storeAddr, storeValue & 0xFFFF);
+              logToConsole(`[Execute] SH: stored halfword ${storeValue & 0xFFFF} to 0x${storeAddr.toString(16)}`, 'execute-line');
               break;
-            case 0x2:
-              writeWord(storeAddr, operandM);
-              logToConsole(`[Execute] SW: stored word ${operandM} to 0x${storeAddr.toString(16)}`, 'execute-line');
+            case 0x2: // SW
+              writeWord(memSeg, storeAddr, storeValue);
+              logToConsole(`[Execute] SW: stored word ${storeValue} to 0x${storeAddr.toString(16)}`, 'execute-line');
               break;
             default:
               logToConsole('[Execute] Unimplemented STORE funct3', 'execute-line');
               break;
           }
           break;
+        }
           
         // SB-type BRANCH Instructions
         case 0x63:
           switch (decoded.funct3) {
-            case 0x0:
-              if (operandA === operandB) {
-                nextPC = programCounter + decoded.immediate;
+            case 0x0: // BEQ
+              if (operand1 === storeValue) {
+                nextPC = pc + decoded.immediate;
                 logToConsole(`[Execute] BEQ taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
               } else {
                 logToConsole('[Execute] BEQ not taken.', 'execute-line');
               }
               break;
-            case 0x1:
-              if (operandA !== operandB) {
-                nextPC = programCounter + decoded.immediate;
+            case 0x1: // BNE
+              if (operand1 !== storeValue) {
+                nextPC = pc + decoded.immediate;
                 logToConsole(`[Execute] BNE taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
               } else {
                 logToConsole('[Execute] BNE not taken.', 'execute-line');
               }
               break;
-            case 0x4:
-              if (operandA < operandB) {
-                nextPC = programCounter + decoded.immediate;
+            case 0x4: // BLT
+              if (operand1 < storeValue) {
+                nextPC = pc + decoded.immediate;
                 logToConsole(`[Execute] BLT taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
               } else {
                 logToConsole('[Execute] BLT not taken.', 'execute-line');
               }
               break;
-            case 0x5:
-              if (operandA >= operandB) {
-                nextPC = programCounter + decoded.immediate;
+            case 0x5: // BGE
+              if (operand1 >= storeValue) {
+                nextPC = pc + decoded.immediate;
                 logToConsole(`[Execute] BGE taken: new PC = 0x${nextPC.toString(16)}`, 'execute-line');
               } else {
                 logToConsole('[Execute] BGE not taken.', 'execute-line');
@@ -825,33 +907,33 @@
           
         // UJ-type JAL Instruction
         case 0x6F:
-          aluResult = programCounter + 4; // Save return address
-          nextPC = programCounter + decoded.immediate;
-          logToConsole(`[Execute] JAL: Jump to 0x${nextPC.toString(16)} with return address 0x${(programCounter + 4).toString(16)}`, 'execute-line');
-          writeBackResult = aluResult;
+          aluOutput = pc + 4; // Save return address
+          nextPC = pc + decoded.immediate;
+          logToConsole(`[Execute] JAL: Jump to 0x${nextPC.toString(16)} with return address 0x${(pc + 4).toString(16)}`, 'execute-line');
+          writeBackData = aluOutput;
           break;
           
         // I-type JALR Instruction
         case 0x67:
-          aluResult = programCounter + 4; // Save return address
-          const target = (operandA + decoded.immediate) & ~1;
+          aluOutput = pc + 4; // Save return address
+          const target = (operand1 + decoded.immediate) & ~1;
           nextPC = target;
-          logToConsole(`[Execute] JALR: Jump to 0x${nextPC.toString(16)} with return address 0x${(programCounter + 4).toString(16)}`, 'execute-line');
-          writeBackResult = aluResult;
+          logToConsole(`[Execute] JALR: Jump to 0x${nextPC.toString(16)} with return address 0x${(pc + 4).toString(16)}`, 'execute-line');
+          writeBackData = aluOutput;
           break;
           
         // U-type LUI Instruction
         case 0x37:
-          aluResult = decoded.immediate;
-          logToConsole(`[Execute] LUI: Result = 0x${aluResult.toString(16)}`, 'execute-line');
-          writeBackResult = aluResult;
+          aluOutput = decoded.immediate;
+          logToConsole(`[Execute] LUI: Result = 0x${aluOutput.toString(16)}`, 'execute-line');
+          writeBackData = aluOutput;
           break;
           
         // U-type AUIPC Instruction
         case 0x17:
-          aluResult = programCounter + decoded.immediate;
-          logToConsole(`[Execute] AUIPC: Result = 0x${aluResult.toString(16)}`, 'execute-line');
-          writeBackResult = aluResult;
+          aluOutput = pc + decoded.immediate;
+          logToConsole(`[Execute] AUIPC: Result = 0x${aluOutput.toString(16)}`, 'execute-line');
+          writeBackData = aluOutput;
           break;
           
         default:
@@ -861,14 +943,15 @@
       
       // Write-Back Stage
       if (decoded.rd !== 0) {
-        registers[decoded.rd] = writeBackResult;
-        logToConsole(`[WB] Updated R[${decoded.rd}] = ${registers[decoded.rd]}`, 'wb-line');
+        registers[decoded.rd] = writeBackData;
+        logToConsole(`[WB] Updated x${decoded.rd} = ${registers[decoded.rd]}`, 'wb-line');
       }
       
       // Ensure register 0 remains 0
       registers[0] = 0;
-      programCounter = nextPC;
+      pc = nextPC;
       updateRegisterDisplay();
+      updateMemoryDisplay();
       return true;
     }
     
@@ -896,18 +979,57 @@
     function resetSimulation() {
       stopSimulation();
       registers.fill(0);
-      programCounter = 0;
-      instructionRegister = 0;
-      operandA = 0;
-      operandB = 0;
-      operandM = 0;
-      aluResult = 0;
-      writeBackResult = 0;
-      memoryDataRegister = 0;
+      registers[2] = 0x7FFFFFFF; // Reset stack pointer
+      pc = 0;
+      ir = 0;
+      operand1 = 0;
+      operand2 = 0;
+      storeValue = 0;
+      aluOutput = 0;
+      writeBackData = 0;
+      memDataReg = 0;
       cycleCount = 0;
       cycleCounter.textContent = 'Cycle: 0';
       clearConsole();
       updateRegisterDisplay();
+    }
+    
+    // Save memory segment to file
+    function saveMemorySegmentToFile(filename, segment, rangeStart, rangeEnd) {
+      // Collect all addresses present in the segment
+      const addresses = Object.keys(segment.storage).map(addr => Number(addr));
+      addresses.sort((a, b) => a - b);
+      
+      // Process each address and create content
+      let content = '';
+      const processed = new Set();
+      
+      for (const addr of addresses) {
+        if (addr < rangeStart) continue;
+        if (rangeEnd >= rangeStart && addr >= rangeEnd) continue;
+        if (addr % 4 !== 0) continue;
+        if (processed.has(addr)) continue;
+        
+        const wordValue = readWord(segment, addr);
+        content += `0x${addr.toString(16).padStart(8, '0')} 0x${wordValue.toString(16).padStart(8, '0')}\n`;
+        
+        // Mark all 4 bytes as processed
+        processed.add(addr);
+        processed.add(addr + 1);
+        processed.add(addr + 2);
+        processed.add(addr + 3);
+      }
+      
+      // Create download link
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
     
     // Load file
@@ -928,6 +1050,14 @@
       fileInput.click();
     });
     
+    saveDataButton.addEventListener('click', () => {
+      saveMemorySegmentToFile('data.mc', dataMemory, 0x10000000, 0x7FFFFFFF);
+    });
+    
+    saveStackButton.addEventListener('click', () => {
+      saveMemorySegmentToFile('stack.mc', stackMemory, 0x7FFFFFFF, 0xFFFFFFFF);
+    });
+    
     stepButton.addEventListener('click', () => {
       simulationStep();
     });
@@ -942,6 +1072,31 @@
     
     resetButton.addEventListener('click', () => {
       resetSimulation();
+    });
+    
+    // Memory segment button listeners
+    showInstructionsBtn.addEventListener('click', () => {
+      currentMemorySegment = 'instructions';
+      showInstructionsBtn.classList.add('active');
+      showDataBtn.classList.remove('active');
+      showStackBtn.classList.remove('active');
+      updateMemoryDisplay();
+    });
+    
+    showDataBtn.addEventListener('click', () => {
+      currentMemorySegment = 'data';
+      showInstructionsBtn.classList.remove('active');
+      showDataBtn.classList.add('active');
+      showStackBtn.classList.remove('active');
+      updateMemoryDisplay();
+    });
+    
+    showStackBtn.addEventListener('click', () => {
+      currentMemorySegment = 'stack';
+      showInstructionsBtn.classList.remove('active');
+      showDataBtn.classList.remove('active');
+      showStackBtn.classList.add('active');
+      updateMemoryDisplay();
     });
     
     // Initialize the simulator
