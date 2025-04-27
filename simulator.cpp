@@ -1,7 +1,6 @@
-
-//2023CSB1123  Hetvi Bagdai
 //2023CSB1174  Yashasvi Chaudhary
-//2023CSB1170  Tanisha Gupta
+//2023CSB1170  Tanisha Gupta\
+//2023CSB1123  Hetvi Bagdai
 #include <iostream>
 #include <fstream>
 #include <sstream>
