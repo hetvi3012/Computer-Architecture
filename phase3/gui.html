@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RISC-V Pipeline Simulator</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .panel {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        h1, h2, h3 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        
+        h1 {
+            grid-column: 1 / -1;
+            text-align: center;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .control-panel {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        select, input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        
+        .knobs {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .knob {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .register-display {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 5px;
+        }
+        
+        .register {
+            background-color: #ecf0f1;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        .register-name {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .register-value {
+            color: #16a085;
+        }
+        
+        .pipeline {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+        }
+        
+        .stage {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            margin: 0 5px;
+            min-height: 100px;
+            position: relative;
+        }
+        
+        .stage.active {
+            background-color: #d5f5e3;
+            border: 1px solid #2ecc71;
+        }
+        
+        .stage.stalled {
+            background-color: #fadbd8;
+            border: 1px solid #e74c3c;
+        }
+        
+        .stage-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #bdc3c7;
+            padding-bottom: 5px;
+        }
+        
+        .stage-content {
+            font-size: 12px;
+            text-align: left;
+        }
+        
+        .memory-view {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: white;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .memory-address {
+            color: #3498db;
+        }
+        
+        .memory-value {
+            color: #e74c3c;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        
+        .stat-item {
+            background-color: #ecf0f1;
+            padding: 10px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        
+        .stat-label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .stat-value {
+            color: #16a085;
+        }
+        
+        .hazard-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .hazard-data {
+            background-color: #f39c12;
+        }
+        
+        .hazard-control {
+            background-color: #9b59b6;
+        }
+        
+        .hazard-branch {
+            background-color: #e74c3c;
+        }
+        
+        .visualization {
+            height: 200px;
+            background-color: white;
+            border: 1px solid #ddd;
+            position: relative;
+            margin-top: 15px;
+        }
+        
+        .timeline {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background-color: #ecf0f1;
+        }
+        
+        .cycle-marker {
+            position: absolute;
+            bottom: 0;
+            width: 2px;
+            height: 30px;
+            background-color: #3498db;
+        }
+        
+        .cycle-label {
+            position: absolute;
+            bottom: 35px;
+            transform: translateX(-50%);
+            font-size: 10px;
+        }
+        
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            
+            .register-display {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RISC-V Pipeline Simulator</h1>
+        
+        <div class="control-panel panel">
+            <div>
+                <button id="loadBtn">Load Program</button>
+                <input type="file" id="fileInput" accept=".mc" style="display: none;">
+                <span id="loadedFile">No file loaded</span>
+            </div>
+            
+            <div>
+                <button id="stepBtn" disabled>Step (N)</button>
+                <button id="runBtn" disabled>Run (R)</button>
+                <button id="resetBtn" disabled>Reset</button>
+            </div>
+            
+            <div class="knobs">
+                <div class="knob">
+                    <input type="checkbox" id="knob2" checked>
+                    <label for="knob2">Data Forwarding</label>
+                </div>
+                <div class="knob">
+                    <input type="checkbox" id="knob3" checked>
+                    <label for="knob3">Show Registers</label>
+                </div>
+                <div class="knob">
+                    <input type="checkbox" id="knob4" checked>
+                    <label for="knob4">Show Pipeline</label>
+                </div>
+                <div class="knob">
+                    <input type="checkbox" id="knob5">
+                    <label for="knob5">Trace Instruction:</label>
+                    <input type="number" id="knob5instr" min="1" value="1" style="width: 50px;">
+                </div>
+                <div class="knob">
+                    <input type="checkbox" id="knob6">
+                    <label for="knob6">Branch Prediction</label>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Register File</h2>
+            <div class="register-display" id="registerDisplay">
+                <!-- Registers will be populated here -->
+            </div>
+            
+            <div style="margin-top: 15px;">
+                <div><strong>PC:</strong> <span id="pcValue">0x00000000</span></div>
+                <div><strong>IR:</strong> <span id="irValue">0x00000000</span></div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Pipeline Stages</h2>
+            <div class="pipeline" id="pipelineStages">
+                <div class="stage" id="stageFetch">
+                    <div class="stage-title">IF (Fetch)</div>
+                    <div class="stage-content" id="fetchContent">Load a program to begin</div>
+                </div>
+                <div class="stage" id="stageDecode">
+                    <div class="stage-title">ID (Decode)</div>
+                    <div class="stage-content" id="decodeContent">No instruction</div>
+                </div>
+                <div class="stage" id="stageExecute">
+                    <div class="stage-title">EX (Execute)</div>
+                    <div class="stage-content" id="executeContent">No instruction</div>
+                </div>
+                <div class="stage" id="stageMemory">
+                    <div class="stage-title">MEM (Memory)</div>
+                    <div class="stage-content" id="memoryContent">No instruction</div>
+                </div>
+                <div class="stage" id="stageWriteback">
+                    <div class="stage-title">WB (Write Back)</div>
+                    <div class="stage-content" id="writebackContent">No instruction</div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 15px;">
+                <h3>Hazards</h3>
+                <div id="hazardsInfo">
+                    No hazards detected
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Instruction Memory</h2>
+            <div class="memory-view" id="instructionMemory">
+                No instructions loaded
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Data Memory</h2>
+            <div class="memory-view" id="dataMemory">
+                No data loaded
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Statistics</h2>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-item">
+                    <div class="stat-label">Total Cycles:</div>
+                    <div class="stat-value" id="statCycles">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Instructions Executed:</div>
+                    <div class="stat-value" id="statInstrs">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">CPI:</div>
+                    <div class="stat-value" id="statCPI">0.00</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Data Transfer Instrs:</div>
+                    <div class="stat-value" id="statDataInstrs">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">ALU Instructions:</div>
+                    <div class="stat-value" id="statALUInstrs">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Control Instructions:</div>
+                    <div class="stat-value" id="statControlInstrs">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Pipeline Stalls:</div>
+                    <div class="stat-value" id="statStalls">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Data Hazards:</div>
+                    <div class="stat-value" id="statDataHazards">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Control Hazards:</div>
+                    <div class="stat-value" id="statControlHazards">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Branch Mispredictions:</div>
+                    <div class="stat-value" id="statBranchMiss">0</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h2>Execution Timeline</h2>
+            <div class="visualization" id="timelineViz">
+                <div class="timeline" id="timeline"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simulator state
+        const simulator = {
+            cycle: 0,
+            registers: new Array(32).fill(0),
+            pc: 0,
+            ir: 0,
+            memory: {},
+            pipeline: {
+                if_id: { PC: 0, IR: 0, valid: false },
+                id_ex: { PC: 0, IR: 0, RA: 0, RB: 0, RM: 0, valid: false },
+                ex_mem: { PC: 0, IR: 0, RZ: 0, RM: 0, valid: false },
+                mem_wb: { PC: 0, IR: 0, RY: 0, valid: false }
+            },
+            stats: {
+                totalCycles: 0,
+                totalInstructions: 0,
+                dataTransferInstructions: 0,
+                aluInstructions: 0,
+                controlInstructions: 0,
+                pipelineStalls: 0,
+                dataHazards: 0,
+                controlHazards: 0,
+                branchMispredictions: 0,
+                dataHazardStalls: 0,
+                controlHazardStalls: 0
+            },
+            hazards: [],
+            running: false,
+            loaded: false
+        };
+        
+        // DOM elements
+        const elements = {
+            loadBtn: document.getElementById('loadBtn'),
+            fileInput: document.getElementById('fileInput'),
+            loadedFile: document.getElementById('loadedFile'),
+            stepBtn: document.getElementById('stepBtn'),
+            runBtn: document.getElementById('runBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            registerDisplay: document.getElementById('registerDisplay'),
+            pcValue: document.getElementById('pcValue'),
+            irValue: document.getElementById('irValue'),
+            pipelineStages: document.getElementById('pipelineStages'),
+            instructionMemory: document.getElementById('instructionMemory'),
+            dataMemory: document.getElementById('dataMemory'),
+            statsGrid: document.getElementById('statsGrid'),
+            hazardsInfo: document.getElementById('hazardsInfo'),
+            timeline: document.getElementById('timeline'),
+            knob2: document.getElementById('knob2'),
+            knob3: document.getElementById('knob3'),
+            knob4: document.getElementById('knob4'),
+            knob5: document.getElementById('knob5'),
+            knob5instr: document.getElementById('knob5instr'),
+            knob6: document.getElementById('knob6'),
+            fetchContent: document.getElementById('fetchContent'),
+            decodeContent: document.getElementById('decodeContent'),
+            executeContent: document.getElementById('executeContent'),
+            memoryContent: document.getElementById('memoryContent'),
+            writebackContent: document.getElementById('writebackContent'),
+            statCycles: document.getElementById('statCycles'),
+            statInstrs: document.getElementById('statInstrs'),
+            statCPI: document.getElementById('statCPI'),
+            statDataInstrs: document.getElementById('statDataInstrs'),
+            statALUInstrs: document.getElementById('statALUInstrs'),
+            statControlInstrs: document.getElementById('statControlInstrs'),
+            statStalls: document.getElementById('statStalls'),
+            statDataHazards: document.getElementById('statDataHazards'),
+            statControlHazards: document.getElementById('statControlHazards'),
+            statBranchMiss: document.getElementById('statBranchMiss')
+        };
+        
+        // Initialize the UI
+        function initUI() {
+            // Initialize register display
+            updateRegisterDisplay();
+            
+            // Set up event listeners
+            elements.loadBtn.addEventListener('click', () => elements.fileInput.click());
+            elements.fileInput.addEventListener('change', handleFileLoad);
+            elements.stepBtn.addEventListener('click', stepSimulation);
+            elements.runBtn.addEventListener('click', toggleRun);
+            elements.resetBtn.addEventListener('click', resetSimulation);
+            
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'n' || e.key === 'N') {
+                    if (!simulator.running && elements.stepBtn.disabled === false) {
+                        stepSimulation();
+                    }
+                } else if (e.key === 'r' || e.key === 'R') {
+                    if (!simulator.running && elements.runBtn.disabled === false) {
+                        toggleRun();
+                    }
+                } else if (e.key === 'e' || e.key === 'E') {
+                    if (simulator.running) {
+                        toggleRun();
+                    }
+                }
+            });
+        }
+        
+        // Handle file loading
+        function handleFileLoad(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    // Parse the .mc file
+                    const content = e.target.result;
+                    const lines = content.split('\n');
+                    
+                    // Reset simulator state
+                    resetSimulator();
+                    
+                    // Parse instructions and data
+                    for (const line of lines) {
+                        if (line.trim() === '') continue;
+                        
+                        // Simple parsing - in a real implementation you'd need more robust parsing
+                        const parts = line.split(/\s+/);
+                        if (parts.length < 2) continue;
+                        
+                        const address = parseInt(parts[0].replace('0x', ''), 16);
+                        const value = parseInt(parts[1].replace('0x', ''), 16);
+                        
+                        if (address < 0x10000000) {
+                            // Instruction memory
+                            simulator.memory[address] = value;
+                        } else {
+                            // Data memory (simplified for this demo)
+                            simulator.memory[address] = value;
+                        }
+                    }
+                    
+                    // Update UI
+                    elements.loadedFile.textContent = file.name;
+                    updateMemoryDisplays();
+                    elements.stepBtn.disabled = false;
+                    elements.runBtn.disabled = false;
+                    elements.resetBtn.disabled = false;
+                    simulator.loaded = true;
+                    
+                    // Initialize pipeline with first instruction
+                    fetchInstruction();
+                    updateUI();
+                } catch (error) {
+                    alert('Error loading file: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        // Reset the simulator
+        function resetSimulator() {
+            simulator.cycle = 0;
+            simulator.registers = new Array(32).fill(0);
+            simulator.pc = 0;
+            simulator.ir = 0;
+            simulator.memory = {};
+            simulator.pipeline = {
+                if_id: { PC: 0, IR: 0, valid: false },
+                id_ex: { PC: 0, IR: 0, RA: 0, RB: 0, RM: 0, valid: false },
+                ex_mem: { PC: 0, IR: 0, RZ: 0, RM: 0, valid: false },
+                mem_wb: { PC: 0, IR: 0, RY: 0, valid: false }
+            };
+            simulator.stats = {
+                totalCycles: 0,
+                totalInstructions: 0,
+                dataTransferInstructions: 0,
+                aluInstructions: 0,
+                controlInstructions: 0,
+                pipelineStalls: 0,
+                dataHazards: 0,
+                controlHazards: 0,
+                branchMispredictions: 0,
+                dataHazardStalls: 0,
+                controlHazardStalls: 0
+            };
+            simulator.hazards = [];
+            simulator.running = false;
+            
+            updateUI();
+        }
+        
+        // Reset the simulation
+        function resetSimulation() {
+            resetSimulator();
+            if (simulator.loaded) {
+                fetchInstruction();
+            }
+        }
+        
+        // Fetch instruction
+        function fetchInstruction() {
+            if (simulator.memory[simulator.pc] !== undefined) {
+                simulator.pipeline.if_id = {
+                    PC: simulator.pc,
+                    IR: simulator.memory[simulator.pc],
+                    valid: true
+                };
+                simulator.pc += 4;
+            } else {
+                simulator.pipeline.if_id = { PC: 0, IR: 0, valid: false };
+            }
+        }
+        
+        // Step through one cycle of simulation
+        function stepSimulation() {
+            if (!simulator.loaded) return;
+            
+            // Process pipeline stages in reverse order
+            writeBackStage();
+            memoryStage();
+            executeStage();
+            decodeStage();
+            fetchStage();
+            
+            // Update cycle count
+            simulator.cycle++;
+            simulator.stats.totalCycles++;
+            
+            // Update UI
+            updateUI();
+            
+            // Check for termination
+            if (simulator.pipeline.if_id.IR === 0 && 
+                !simulator.pipeline.id_ex.valid && 
+                !simulator.pipeline.ex_mem.valid && 
+                !simulator.pipeline.mem_wb.valid) {
+                alert('Simulation completed!');
+                elements.stepBtn.disabled = true;
+                elements.runBtn.disabled = true;
+            }
+        }
+        
+        // Write-back stage
+        function writeBackStage() {
+            if (simulator.pipeline.mem_wb.valid) {
+                // In a real implementation, you would write back to registers
+                simulator.stats.totalInstructions++;
+                
+                // Update statistics based on instruction type
+                // (This is simplified - in real code you'd decode the instruction)
+                simulator.stats.aluInstructions++;
+            }
+            
+            // Move ex_mem to mem_wb
+            simulator.pipeline.mem_wb = simulator.pipeline.ex_mem;
+        }
+        
+        // Memory stage
+        function memoryStage() {
+            if (simulator.pipeline.ex_mem.valid) {
+                // In a real implementation, you would handle memory access here
+            }
+            
+            // Move id_ex to ex_mem
+            simulator.pipeline.ex_mem = simulator.pipeline.id_ex;
+        }
+        
+        // Execute stage
+        function executeStage() {
+            if (simulator.pipeline.id_ex.valid) {
+                // In a real implementation, you would perform ALU operations here
+                
+                // Detect hazards (simplified for this demo)
+                if (Math.random() < 0.2) {
+                    simulator.hazards.push({
+                        type: 'data',
+                        stage: 'EX',
+                        message: 'RAW hazard detected between EX and MEM stages'
+                    });
+                    simulator.stats.dataHazards++;
+                }
+            }
+            
+            // Move if_id to id_ex
+            simulator.pipeline.id_ex = simulator.pipeline.if_id;
+        }
+        
+        // Decode stage
+        function decodeStage() {
+            if (simulator.pipeline.if_id.valid) {
+                // In a real implementation, you would decode the instruction here
+                
+                // Randomly generate some hazards for demo purposes
+                if (Math.random() < 0.1) {
+                    simulator.hazards.push({
+                        type: 'control',
+                        stage: 'ID',
+                        message: 'Control hazard detected - branch prediction needed'
+                    });
+                    simulator.stats.controlHazards++;
+                }
+            }
+        }
+        
+        // Fetch stage
+        function fetchStage() {
+            // In a real implementation, you would fetch the next instruction
+            fetchInstruction();
+        }
+        
+        // Toggle run/pause
+        function toggleRun() {
+            simulator.running = !simulator.running;
+            elements.runBtn.textContent = simulator.running ? 'Pause' : 'Run (R)';
+            
+            if (simulator.running) {
+                runSimulation();
+            }
+        }
+        
+        // Run simulation continuously
+        function runSimulation() {
+            if (!simulator.running) return;
+            
+            stepSimulation();
+            
+            if (simulator.running) {
+                setTimeout(runSimulation, 500);
+            }
+        }
+        
+        // Update register display
+        function updateRegisterDisplay() {
+            if (!elements.registerDisplay) return;
+            
+            elements.registerDisplay.innerHTML = '';
+            
+            for (let i = 0; i < 32; i++) {
+                const reg = document.createElement('div');
+                reg.className = 'register';
+                reg.innerHTML = `
+                    <div class="register-name">x${i}</div>
+                    <div class="register-value">0x${simulator.registers[i].toString(16).padStart(8, '0')}</div>
+                `;
+                elements.registerDisplay.appendChild(reg);
+            }
+            
+            if (elements.pcValue) {
+                elements.pcValue.textContent = `0x${simulator.pc.toString(16).padStart(8, '0')}`;
+            }
+            if (elements.irValue) {
+                elements.irValue.textContent = `0x${simulator.ir.toString(16).padStart(8, '0')}`;
+            }
+        }
+        
+        // Update pipeline display
+        function updatePipelineDisplay() {
+            // Update each stage
+            updateStage('stageFetch', 'fetch', simulator.pipeline.if_id);
+            updateStage('stageDecode', 'decode', simulator.pipeline.id_ex);
+            updateStage('stageExecute', 'execute', simulator.pipeline.ex_mem);
+            updateStage('stageMemory', 'memory', simulator.pipeline.mem_wb);
+            updateStage('stageWriteback', 'writeback', {});
+            
+            // Highlight active stages
+            document.querySelectorAll('.stage').forEach(stage => {
+                if (stage) {
+                    stage.classList.remove('active', 'stalled');
+                }
+            });
+            
+            if (simulator.pipeline.if_id.valid && document.getElementById('stageFetch')) {
+                document.getElementById('stageFetch').classList.add('active');
+            }
+            if (simulator.pipeline.id_ex.valid && document.getElementById('stageDecode')) {
+                document.getElementById('stageDecode').classList.add('active');
+            }
+            if (simulator.pipeline.ex_mem.valid && document.getElementById('stageExecute')) {
+                document.getElementById('stageExecute').classList.add('active');
+            }
+            if (simulator.pipeline.mem_wb.valid && document.getElementById('stageMemory')) {
+                document.getElementById('stageMemory').classList.add('active');
+            }
+            if (simulator.pipeline.mem_wb.valid && document.getElementById('stageWriteback')) {
+                document.getElementById('stageWriteback').classList.add('active');
+            }
+            
+            // Show hazards
+            if (elements.hazardsInfo) {
+                if (simulator.hazards.length > 0) {
+                    let hazardsHTML = '';
+                    for (const hazard of simulator.hazards) {
+                        const hazardClass = hazard.type === 'data' ? 'hazard-data' : 
+                                          hazard.type === 'control' ? 'hazard-control' : 'hazard-branch';
+                        hazardsHTML += `
+                            <div>
+                                <span class="hazard-indicator ${hazardClass}"></span>
+                                ${hazard.message}
+                            </div>
+                        `;
+                    }
+                    elements.hazardsInfo.innerHTML = hazardsHTML;
+                } else {
+                    elements.hazardsInfo.innerHTML = 'No hazards detected';
+                }
+            }
+        }
+        
+        // Update a single pipeline stage display
+        function updateStage(stageId, stageName, stageData) {
+            const stageElement = document.getElementById(stageId);
+            const contentElement = elements[stageName + 'Content'];
+            
+            if (!contentElement) return;
+            
+            if (stageData.valid) {
+                contentElement.innerHTML = `
+                    <div><strong>PC:</strong> 0x${stageData.PC.toString(16).padStart(8, '0')}</div>
+                    <div><strong>IR:</strong> 0x${stageData.IR.toString(16).padStart(8, '0')}</div>
+                    ${stageData.RA !== undefined ? `<div><strong>RA:</strong> ${stageData.RA}</div>` : ''}
+                    ${stageData.RB !== undefined ? `<div><strong>RB:</strong> ${stageData.RB}</div>` : ''}
+                    ${stageData.RZ !== undefined ? `<div><strong>RZ:</strong> ${stageData.RZ}</div>` : ''}
+                    ${stageData.RY !== undefined ? `<div><strong>RY:</strong> ${stageData.RY}</div>` : ''}
+                `;
+            } else {
+                contentElement.innerHTML = stageId === 'stageFetch' && !simulator.loaded ? 
+                    'Load a program to begin' : 'No instruction';
+            }
+        }
+        
+        // Update memory displays
+        function updateMemoryDisplays() {
+            // Instruction memory
+            let instrHTML = '';
+            for (const [addr, value] of Object.entries(simulator.memory)) {
+                if (parseInt(addr) < 0x10000000) {
+                    instrHTML += `
+                        <div>
+                            <span class="memory-address">0x${parseInt(addr).toString(16).padStart(8, '0')}</span>
+                            <span class="memory-value">0x${value.toString(16).padStart(8, '0')}</span>
+                        </div>
+                    `;
+                }
+            }
+            if (elements.instructionMemory) {
+                elements.instructionMemory.innerHTML = instrHTML || 'No instructions loaded';
+            }
+            
+            // Data memory
+            let dataHTML = '';
+            for (const [addr, value] of Object.entries(simulator.memory)) {
+                if (parseInt(addr) >= 0x10000000) {
+                    dataHTML += `
+                        <div>
+                            <span class="memory-address">0x${parseInt(addr).toString(16).padStart(8, '0')}</span>
+                            <span class="memory-value">0x${value.toString(16).padStart(8, '0')}</span>
+                        </div>
+                    `;
+                }
+            }
+            if (elements.dataMemory) {
+                elements.dataMemory.innerHTML = dataHTML || 'No data loaded';
+            }
+        }
+        
+        // Update statistics display
+        function updateStatsDisplay() {
+            if (elements.statCycles) {
+                elements.statCycles.textContent = simulator.stats.totalCycles;
+            }
+            if (elements.statInstrs) {
+                elements.statInstrs.textContent = simulator.stats.totalInstructions;
+            }
+            if (elements.statCPI) {
+                elements.statCPI.textContent = simulator.stats.totalInstructions > 0 ? 
+                    (simulator.stats.totalCycles / simulator.stats.totalInstructions).toFixed(2) : '0.00';
+            }
+            if (elements.statDataInstrs) {
+                elements.statDataInstrs.textContent = simulator.stats.dataTransferInstructions;
+            }
+            if (elements.statALUInstrs) {
+                elements.statALUInstrs.textContent = simulator.stats.aluInstructions;
+            }
+            if (elements.statControlInstrs) {
+                elements.statControlInstrs.textContent = simulator.stats.controlInstructions;
+            }
+            if (elements.statStalls) {
+                elements.statStalls.textContent = simulator.stats.pipelineStalls;
+            }
+            if (elements.statDataHazards) {
+                elements.statDataHazards.textContent = simulator.stats.dataHazards;
+            }
+            if (elements.statControlHazards) {
+                elements.statControlHazards.textContent = simulator.stats.controlHazards;
+            }
+            if (elements.statBranchMiss) {
+                elements.statBranchMiss.textContent = simulator.stats.branchMispredictions;
+            }
+        }
+        
+        // Update timeline visualization
+        function updateTimeline() {
+            if (!elements.timeline) return;
+            
+            elements.timeline.innerHTML = '';
+            
+            // Add markers for each cycle
+            for (let i = 0; i <= simulator.cycle && i < 20; i++) {
+                const marker = document.createElement('div');
+                marker.className = 'cycle-marker';
+                marker.style.left = `${(i * 50) + 10}px`;
+                
+                const label = document.createElement('div');
+                label.className = 'cycle-label';
+                label.textContent = `Cycle ${i}`;
+                label.style.left = `${(i * 50) + 10}px`;
+                
+                elements.timeline.appendChild(marker);
+                elements.timeline.appendChild(label);
+            }
+        }
+        
+        // Update all UI elements
+        function updateUI() {
+            updateRegisterDisplay();
+            updatePipelineDisplay();
+            updateMemoryDisplays();
+            updateStatsDisplay();
+            updateTimeline();
+        }
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', initUI);
+    </script>
+</body>
+</html>
